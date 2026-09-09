@@ -2,6 +2,95 @@ import { NurseStaff, PatientRoom, RecommendationResult, AssignmentWarning, Nurse
 import { ROOM_METADATA_MAP, evaluateGeographicCluster } from '../config/geography';
 import { StorageService } from './storage';
 
+const isClinicallyQualified = (nurse: NurseStaff, room: PatientRoom): boolean =>
+  nurse.capability === 'CVICU' ? true :
+  nurse.capability === 'ICU' ? ['ICU', 'PCU', 'TELE'].includes(room.acuity) :
+  ['PCU', 'TELE'].includes(room.acuity);
+
+const workloadBlockReason = (nurse: NurseStaff, assigned: PatientRoom[], room: PatientRoom, allowTeleQuad: boolean): string | null => {
+  const cvicuCount = assigned.filter(r => r.acuity === 'CVICU').length;
+  const icuCount = assigned.filter(r => r.acuity === 'ICU').length;
+  const pcuTeleCount = assigned.filter(r => ['PCU', 'TELE'].includes(r.acuity)).length;
+  const assignmentLabel = assigned.length
+    ? assigned.map(r => `${r.roomNumber} ${r.acuity}`).join(', ')
+    : 'no current patients';
+
+  if (room.acuity === 'CVICU') {
+    if (assigned.length > 0) return `${nurse.name} already has ${assignmentLabel}; CVICU is configured 1:1.`;
+    return null;
+  }
+
+  if (room.acuity === 'ICU') {
+    if (cvicuCount > 0) return `${nurse.name} has ${assignmentLabel}; a CVICU assignment cannot be paired with ICU.`;
+    if (icuCount >= 2) return `${nurse.name} already has ${assignmentLabel}; ICU limit is 1:2.`;
+    if (icuCount === 1 && pcuTeleCount >= 1) return `${nurse.name} already has ${assignmentLabel}; mixed-acuity limit is 1 ICU + 1 PCU/TELE.`;
+    return null;
+  }
+
+  if (cvicuCount > 0) return `${nurse.name} has ${assignmentLabel}; a CVICU assignment is protected 1:1.`;
+  if (icuCount === 2) return `${nurse.name} already has ${assignmentLabel}; 2 ICU patients reaches baseline capacity.`;
+  if (icuCount === 1 && pcuTeleCount >= 1) return `${nurse.name} already has ${assignmentLabel}; mixed-acuity limit is 1 ICU + 1 PCU/TELE.`;
+
+  const assignedAreTeleOnly = assigned.every(r => r.acuity === 'TELE');
+  const teleQuadEligible = allowTeleQuad && nurse.capability === 'PCU_TELE' && room.acuity === 'TELE' && assignedAreTeleOnly;
+  const maxPcuTele = teleQuadEligible ? 4 : 3;
+  if (pcuTeleCount >= maxPcuTele) {
+    return `${nurse.name} already has ${assignmentLabel}; ${teleQuadEligible ? 'approved TELE quad limit is 1:4' : 'PCU/TELE baseline ratio is 1:3'}.`;
+  }
+  return null;
+};
+
+const exactLimitingFactor = (
+  room: PatientRoom,
+  staffList: NurseStaff[],
+  nurseState: Record<string, { nurse: NurseStaff; assignedRooms: PatientRoom[]; reasons: string[] }>,
+  chargeTakingPatients: boolean,
+  allowTeleQuad: boolean,
+): string => {
+  const bedside = staffList.filter(s => s.role === 'RN' || s.role === 'CHG');
+  const qualified = bedside.filter(s => isClinicallyQualified(s, room));
+
+  if (qualified.length === 0) {
+    if (room.acuity === 'CVICU') return `No CVICU-capable RN is on the roster for Room ${room.roomNumber}.`;
+    if (room.acuity === 'ICU') return `No ICU- or CVICU-capable RN is on the roster for Room ${room.roomNumber}.`;
+    return `No RN with PCU/TELE-or-higher capability is on the roster for Room ${room.roomNumber}.`;
+  }
+
+  const inactiveQualified = qualified.filter(s => s.staffStatus === 'FLEXED' || s.staffStatus === 'ON_CALL');
+  const activeQualified = qualified.filter(s => s.staffStatus === 'ACTIVE' || s.staffStatus === 'RECALLED');
+  const protectedCharge = activeQualified.filter(s => s.role === 'CHG' && !chargeTakingPatients);
+  const eligibleActive = activeQualified.filter(s => s.role === 'RN' || (s.role === 'CHG' && chargeTakingPatients));
+
+  if (eligibleActive.length === 0) {
+    const reserveText = inactiveQualified.length
+      ? ` Qualified reserve: ${inactiveQualified.map(s => `${s.name} (${s.staffStatus === 'ON_CALL' ? 'ON CALL' : 'FLEXED'})`).join(', ')}.`
+      : '';
+    const chargeText = protectedCharge.length
+      ? ` ${protectedCharge.map(s => s.name).join(', ')} is qualified but Charge is protected from bedside assignment.`
+      : '';
+    return `No qualified ACTIVE/RECALLED bedside RN is available for Room ${room.roomNumber}.${reserveText}${chargeText}`;
+  }
+
+  const blockers = eligibleActive.map(nurse => {
+    const assigned = nurseState[nurse.id]?.assignedRooms || [];
+    return workloadBlockReason(nurse, assigned, room, allowTeleQuad);
+  }).filter((reason): reason is string => Boolean(reason));
+
+  if (blockers.length === eligibleActive.length) {
+    const prefix = room.acuity === 'CVICU'
+      ? 'All active CVICU-qualified RNs are already committed at the configured 1:1 limit.'
+      : room.acuity === 'ICU'
+        ? 'All active ICU-qualified RNs are at their ICU or mixed-acuity workload limit.'
+        : 'All clinically qualified active RNs are at their current workload limit; the PCU/TELE baseline ratio is 1:3 unless an approved exception applies.';
+    const reserveText = inactiveQualified.length
+      ? ` Qualified reserve exists: ${inactiveQualified.map(s => `${s.name} (${s.staffStatus === 'ON_CALL' ? 'ON CALL' : 'FLEXED'})`).join(', ')}.`
+      : '';
+    return `${prefix} ${blockers.join(' ')}${reserveText}`;
+  }
+
+  return `Qualified staff exist, but no eligible assignment satisfied all configured capability and baseline workload constraints for Room ${room.roomNumber}.`;
+};
+
 export function runRecommendationEngine(
   staffList: NurseStaff[],
   roomsList: PatientRoom[],
@@ -12,7 +101,6 @@ export function runRecommendationEngine(
   const assignments: Record<string, string> = {};
   const occupiedRooms = roomsList.filter(r => r.isOccupied);
 
-  // Eligible bedside staff
   const availableNurses = staffList.filter(s => {
     if (s.staffStatus !== 'ACTIVE' && s.staffStatus !== 'RECALLED') return false;
     if (s.role === 'CHG' && !chargeTakingPatients) return false;
@@ -29,7 +117,6 @@ export function runRecommendationEngine(
     nurseState[n.id] = { nurse: n, assignedRooms: [], reasons: [] };
   });
 
-  // Rule: HD/Dialysis Room Validation
   occupiedRooms.forEach(r => {
     if (r.flags.includes('HD/Dialysis')) {
       const meta = ROOM_METADATA_MAP[r.roomNumber];
@@ -44,7 +131,6 @@ export function runRecommendationEngine(
     }
   });
 
-  // Rule: Safety Room Advisory
   occupiedRooms.forEach(r => {
     const hasSafetyRisk = r.flags.some(f => ['High Fall Risk', 'Confused', 'Sitter/Safety'].includes(f));
     if (hasSafetyRisk && !['109', '119'].includes(r.roomNumber)) {
@@ -57,7 +143,6 @@ export function runRecommendationEngine(
     }
   });
 
-  // Sort rooms: High acuity & continuity first
   const sortedRooms = [...occupiedRooms].sort((a, b) => {
     const rank: Record<string, number> = { CVICU: 4, ICU: 3, PCU: 2, TELE: 1 };
     return rank[b.acuity] - rank[a.acuity];
@@ -75,47 +160,17 @@ export function runRecommendationEngine(
       const state = nurseState[nurse.id];
       const assigned = state.assignedRooms;
 
-      // 1. Mandatory Clinical Capability Check
-      const isQualified =
-        nurse.capability === 'CVICU' ? true :
-        nurse.capability === 'ICU' ? ['ICU', 'PCU', 'TELE'].includes(room.acuity) :
-        ['PCU', 'TELE'].includes(room.acuity);
+      if (!isClinicallyQualified(nurse, room)) continue;
+      if (workloadBlockReason(nurse, assigned, room, allowTeleQuad)) continue;
 
-      if (!isQualified) continue;
-
-      // 2. Mandatory Baseline Staffing Limit Check
-      const cvicuCount = assigned.filter(r => r.acuity === 'CVICU').length;
-      const icuCount = assigned.filter(r => r.acuity === 'ICU').length;
-      const pcuTeleCount = assigned.filter(r => ['PCU', 'TELE'].includes(r.acuity)).length;
-
-      if (room.acuity === 'CVICU') {
-        if (assigned.length > 0) continue; // CVICU is strictly 1:1
-      } else if (room.acuity === 'ICU') {
-        if (cvicuCount > 0) continue;
-        if (icuCount >= 2) continue; // Max 2 ICU
-        if (icuCount === 1 && pcuTeleCount >= 1) continue; // Max 1 ICU + 1 PCU
-      } else {
-        // PCU / TELE
-        if (cvicuCount > 0) continue;
-        if (icuCount === 1 && pcuTeleCount >= 1) continue;
-        if (icuCount === 2) continue;
-        const assignedAreTeleOnly = assigned.every(r => r.acuity === 'TELE');
-        const teleQuadEligible = allowTeleQuad && nurse.capability === 'PCU_TELE' && room.acuity === 'TELE' && assignedAreTeleOnly;
-        const maxPcuTele = teleQuadEligible ? 4 : 3;
-        if (pcuTeleCount >= maxPcuTele) continue;
-      }
-
-      // Optimization Scoring
       let score = 50;
       const reasons: string[] = [`✓ ${nurse.capability} clinically qualified`];
 
-      // Continuity Bonus
       if (continuity && continuity.nurseId === nurse.id) {
         score += 80;
         reasons.push(`✓ Continuity preserved — cared for patient ${continuity.daysAgo}d ago`);
       }
 
-      // Geographic Clustering
       if (assigned.length > 0) {
         const candidateRooms = [...assigned.map(r => r.roomNumber), room.roomNumber];
         const geo = evaluateGeographicCluster(candidateRooms);
@@ -125,10 +180,7 @@ export function runRecommendationEngine(
         score += 20;
       }
 
-      // Charge Nurse exclusion preference
       if (nurse.role === 'CHG') score -= 30;
-
-      // MT dual role constraint buffer
       if (nurse.coveringMT) score -= 25;
 
       if (score > bestScore) {
@@ -149,12 +201,11 @@ export function runRecommendationEngine(
         type: 'CAPABILITY',
         severity: 'HIGH',
         roomNumber: room.roomNumber,
-        message: `Requires Charge Nurse review: Room ${room.roomNumber} (${room.acuity}) could not be auto-assigned within safe baseline rules.`
+        message: exactLimitingFactor(room, staffList, nurseState, chargeTakingPatients, allowTeleQuad)
       });
     }
   }
 
-  // Workload and Geographic Validation for final state
   Object.values(nurseState).forEach(st => {
     if (st.assignedRooms.length === 0) return;
     const roomNums = st.assignedRooms.map(r => r.roomNumber);
