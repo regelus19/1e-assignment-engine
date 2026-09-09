@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, BedDouble, Building2, Hospital, Save } from 'lucide-react';
+import { ArrowDownToLine, ArrowRightLeft, ArrowUpFromLine, BedDouble, Building2, Save } from 'lucide-react';
 
 export interface OperationalSnapshotData {
   expectedDischarges: number;
@@ -68,7 +68,7 @@ export const OperationalSnapshot: React.FC<Props> = ({ currentCensus, capacity =
       <div className="max-w-7xl mx-auto px-6 py-3">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <div>
-            <div className="flex items-center gap-2"><Hospital className="w-4 h-4 text-blue-700"/><h2 className="text-xs font-black uppercase tracking-wider text-slate-800">1E Operational Snapshot</h2></div>
+            <div className="flex items-center gap-2"><Building2 className="w-4 h-4 text-blue-700"/><h2 className="text-xs font-black uppercase tracking-wider text-slate-800">1E Operational Snapshot</h2></div>
             <p className="text-[10px] text-slate-500 mt-0.5">Manual V1 • quick view of today's patient flow. Future-ready for Operations Hub / live data integration.</p>
           </div>
           <button type="button" onClick={() => { localStorage.setItem(KEY, JSON.stringify(data)); setSaved(true); }} className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-[10px] font-bold flex items-center gap-1"><Save className="w-3 h-3"/>{saved ? 'Saved' : 'Save Snapshot'}</button>
