@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { runRecommendationEngine } from '../services/recommendationEngine';
 import { StorageService } from '../services/storage';
+import { CurrentRosterPanel } from './CurrentRosterPanel';
 import { FloorPlanCurrentStaffing } from './FloorPlanCurrentStaffing';
 
 interface Props {
@@ -37,8 +38,17 @@ export const CurrentStaffing: React.FC<Props> = ({ currentShift, onCurrentShiftC
   };
 
   const saveState = (next: CurrentShiftState) => {
-    StorageService.saveCurrentShift(next);
-    onCurrentShiftChange({ ...next, lastUpdatedAt: new Date().toISOString() });
+    const stamped = { ...next, lastUpdatedAt: new Date().toISOString() };
+    StorageService.saveCurrentShift(stamped);
+    onCurrentShiftChange(stamped);
+  };
+
+  const updateCurrentRoster = (roster: NurseStaff[]) => {
+    const validIds = new Set(roster.map(staff => staff.id));
+    const rooms = currentShift.rooms.map(room => room.assignedNurseId && !validIds.has(room.assignedNurseId)
+      ? { ...room, assignedNurseId: null }
+      : room);
+    saveState({ ...currentShift, roster, rooms });
   };
 
   const updateRoom = (updated: PatientRoom) => {
@@ -46,31 +56,13 @@ export const CurrentStaffing: React.FC<Props> = ({ currentShift, onCurrentShiftC
     const next = { ...currentShift, rooms: currentShift.rooms.map(r => r.roomNumber === updated.roomNumber ? updated : r) };
     saveState(next);
     if (before && before.isOccupied !== updated.isOccupied) {
-      appendEvent({
-        id: `evt-${Date.now()}`,
-        timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType,
-        type: 'ROOM_OCCUPANCY_CHANGE', roomNumber: updated.roomNumber,
-        summary: `Room ${updated.roomNumber} changed to ${updated.isOccupied ? 'occupied' : 'empty'}.`,
-        beforeValue: before.isOccupied ? 'Occupied' : 'Empty', afterValue: updated.isOccupied ? 'Occupied' : 'Empty',
-      });
+      appendEvent({ id: `evt-${Date.now()}`, timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType, type: 'ROOM_OCCUPANCY_CHANGE', roomNumber: updated.roomNumber, summary: `Room ${updated.roomNumber} changed to ${updated.isOccupied ? 'occupied' : 'empty'}.`, beforeValue: before.isOccupied ? 'Occupied' : 'Empty', afterValue: updated.isOccupied ? 'Occupied' : 'Empty' });
     }
     if (before && before.acuity !== updated.acuity) {
-      appendEvent({
-        id: `evt-${Date.now()}-acuity`,
-        timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType,
-        type: 'ACUITY_CHANGE', roomNumber: updated.roomNumber,
-        summary: `Room ${updated.roomNumber} acuity changed ${before.acuity} → ${updated.acuity}.`,
-        beforeValue: before.acuity, afterValue: updated.acuity,
-      });
+      appendEvent({ id: `evt-${Date.now()}-acuity`, timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType, type: 'ACUITY_CHANGE', roomNumber: updated.roomNumber, summary: `Room ${updated.roomNumber} acuity changed ${before.acuity} → ${updated.acuity}.`, beforeValue: before.acuity, afterValue: updated.acuity });
     }
     if (before && before.flags.join('|') !== updated.flags.join('|')) {
-      appendEvent({
-        id: `evt-${Date.now()}-flags`,
-        timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType,
-        type: 'ROOM_FLAGS_CHANGE', roomNumber: updated.roomNumber,
-        summary: `Room ${updated.roomNumber} flags updated: ${updated.flags.length ? updated.flags.join(', ') : 'none'}.`,
-        beforeValue: before.flags.join(', '), afterValue: updated.flags.join(', '),
-      });
+      appendEvent({ id: `evt-${Date.now()}-flags`, timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType, type: 'ROOM_FLAGS_CHANGE', roomNumber: updated.roomNumber, summary: `Room ${updated.roomNumber} flags updated: ${updated.flags.length ? updated.flags.join(', ') : 'none'}.`, beforeValue: before.flags.join(', '), afterValue: updated.flags.join(', ') });
     }
   };
 
@@ -80,41 +72,19 @@ export const CurrentStaffing: React.FC<Props> = ({ currentShift, onCurrentShiftC
     saveState({ ...currentShift, rooms: nextRooms });
     const beforeName = currentShift.roster.find(s => s.id === before)?.name || 'Unassigned';
     const afterName = currentShift.roster.find(s => s.id === nurseId)?.name || 'Unassigned';
-    appendEvent({
-      id: `evt-${Date.now()}`,
-      timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType,
-      type: 'ASSIGNMENT_CHANGE', roomNumber,
-      summary: `Room ${roomNumber} assignment changed ${beforeName} → ${afterName}.`,
-      beforeValue: beforeName, afterValue: afterName,
-    });
+    appendEvent({ id: `evt-${Date.now()}`, timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType, type: 'ASSIGNMENT_CHANGE', roomNumber, summary: `Room ${roomNumber} assignment changed ${beforeName} → ${afterName}.`, beforeValue: beforeName, afterValue: afterName });
   };
 
   const updateStaffStatus = (staff: NurseStaff, status: StaffStatus) => {
-    const updatedRoster = currentShift.roster.map(s => s.id === staff.id ? {
-      ...s,
-      staffStatus: status,
-      actualRecallTime: status === 'RECALLED' ? new Date().toISOString() : s.actualRecallTime,
-    } : s);
+    const updatedRoster = currentShift.roster.map(s => s.id === staff.id ? { ...s, staffStatus: status, actualRecallTime: status === 'RECALLED' ? new Date().toISOString() : s.actualRecallTime } : s);
     saveState({ ...currentShift, roster: updatedRoster });
-    appendEvent({
-      id: `evt-${Date.now()}`,
-      timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType,
-      type: 'STAFF_STATUS_CHANGE', staffId: staff.id,
-      summary: `${staff.name} status changed ${staff.staffStatus} → ${status}.`,
-      beforeValue: staff.staffStatus, afterValue: status,
-    });
+    appendEvent({ id: `evt-${Date.now()}`, timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType, type: 'STAFF_STATUS_CHANGE', staffId: staff.id, summary: `${staff.name} status changed ${staff.staffStatus} → ${status}.`, beforeValue: staff.staffStatus, afterValue: status });
   };
 
   const updateSupport = (kind: 'MT' | 'PCT', value: string) => {
     const next = kind === 'MT' ? { ...currentShift, mtState: value as CurrentShiftState['mtState'] } : { ...currentShift, pctState: value as CurrentShiftState['pctState'] };
     saveState(next);
-    appendEvent({
-      id: `evt-${Date.now()}`,
-      timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType,
-      type: kind === 'MT' ? 'MT_CHANGE' : 'PCT_CHANGE',
-      summary: `${kind} coverage changed to ${value.replaceAll('_', ' ')}.`,
-      afterValue: value,
-    });
+    appendEvent({ id: `evt-${Date.now()}`, timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType, type: kind === 'MT' ? 'MT_CHANGE' : 'PCT_CHANGE', summary: `${kind} coverage changed to ${value.replaceAll('_', ' ')}.`, afterValue: value });
   };
 
   const generateCurrentRecommendation = () => {
@@ -124,35 +94,12 @@ export const CurrentStaffing: React.FC<Props> = ({ currentShift, onCurrentShiftC
     setWarnings(result.warnings);
     setUnassigned(result.unassignedRooms);
     setFitLabel(result.fitLabel);
-    appendEvent({
-      id: `evt-${Date.now()}`,
-      timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType,
-      type: 'RECOMMENDATION_GENERATED',
-      summary: `Current recommendation generated: ${result.fitLabel}; ${result.unassignedRooms.length} room(s) unassigned.`,
-    });
+    appendEvent({ id: `evt-${Date.now()}`, timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType, type: 'RECOMMENDATION_GENERATED', summary: `Current recommendation generated: ${result.fitLabel}; ${result.unassignedRooms.length} room(s) unassigned.` });
   };
 
   const snapshotCurrent = () => {
-    StorageService.saveFinalizedShift({
-      id: `actual-${Date.now()}`,
-      date: currentShift.date,
-      shiftType: currentShift.shiftType,
-      finalizedAt: new Date().toISOString(),
-      roster: currentShift.roster,
-      rooms: currentShift.rooms,
-      onCall: currentShift.onCall,
-      fitScore: unassigned.length === 0 ? 100 : Math.max(10, 100 - unassigned.length * 15),
-      warnings,
-      mtState: currentShift.mtState,
-      pctState: currentShift.pctState,
-      currentMRS: 0,
-      projectedMRS: 0,
-    });
-    appendEvent({
-      id: `evt-${Date.now()}`,
-      timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType,
-      type: 'CURRENT_SNAPSHOT', summary: 'Current staffing snapshot saved to shift history.',
-    });
+    StorageService.saveFinalizedShift({ id: `actual-${Date.now()}`, date: currentShift.date, shiftType: currentShift.shiftType, finalizedAt: new Date().toISOString(), roster: currentShift.roster, rooms: currentShift.rooms, onCall: currentShift.onCall, fitScore: unassigned.length === 0 ? 100 : Math.max(10, 100 - unassigned.length * 15), warnings, mtState: currentShift.mtState, pctState: currentShift.pctState, currentMRS: 0, projectedMRS: 0 });
+    appendEvent({ id: `evt-${Date.now()}`, timestamp: new Date().toISOString(), shiftDate: currentShift.date, shiftType: currentShift.shiftType, type: 'CURRENT_SNAPSHOT', summary: 'Current staffing snapshot saved to shift history.' });
   };
 
   const shiftEvents = useMemo(() => events.filter(e => e.shiftDate === currentShift.date && e.shiftType === currentShift.shiftType).slice(0, 12), [events, currentShift.date, currentShift.shiftType]);
@@ -161,59 +108,28 @@ export const CurrentStaffing: React.FC<Props> = ({ currentShift, onCurrentShiftC
     <div className="space-y-5">
       <div className="bg-slate-900 text-white rounded-xl p-4 shadow-sm">
         <div className="flex flex-wrap justify-between items-start gap-4">
-          <div>
-            <div className="flex items-center gap-2"><Clock3 className="w-4 h-4 text-emerald-300"/><span className="text-xs uppercase font-black tracking-wide text-slate-300">Live Current Staffing</span></div>
-            <div className="text-xl font-black mt-1">{currentShift.date} • {currentShift.shiftType} Shift</div>
-            <div className="text-xs text-slate-400 mt-1">Last updated {fmtTime(currentShift.lastUpdatedAt)} • Changes are stored locally and time-stamped.</div>
-          </div>
-          <div className="flex flex-wrap gap-2 text-xs">
-            <div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Census <b>{census}</b></div>
-            <div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Active bedside RNs <b>{activeRNs}</b></div>
-            <div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Flex/On-call reserve <b>{onCallCount}</b></div>
-            <div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Fit <b>{fitLabel}</b></div>
-          </div>
+          <div><div className="flex items-center gap-2"><Clock3 className="w-4 h-4 text-emerald-300"/><span className="text-xs uppercase font-black tracking-wide text-slate-300">Live Current Staffing</span></div><div className="text-xl font-black mt-1">{currentShift.date} • {currentShift.shiftType} Shift</div><div className="text-xs text-slate-400 mt-1">Last updated {fmtTime(currentShift.lastUpdatedAt)} • Changes are stored locally and time-stamped.</div></div>
+          <div className="flex flex-wrap gap-2 text-xs"><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Census <b>{census}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Active bedside RNs <b>{activeRNs}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Flex/On-call reserve <b>{onCallCount}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Fit <b>{fitLabel}</b></div></div>
         </div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap justify-between gap-3 items-end">
-        <div className="flex flex-wrap gap-3 items-end">
-          <div><label className="text-[10px] uppercase font-black text-slate-500 block mb-1">MT Coverage</label><select value={currentShift.mtState} onChange={e => updateSupport('MT', e.target.value)} className="border rounded-lg px-3 py-2 text-xs"><option value="MT_PRESENT">MT Present</option><option value="RN_COVERING_MT">RN Covering MT</option><option value="MT_UNFILLED">MT Unfilled</option></select></div>
-          <div><label className="text-[10px] uppercase font-black text-slate-500 block mb-1">PCT Support</label><select value={currentShift.pctState} onChange={e => updateSupport('PCT', e.target.value)} className="border rounded-lg px-3 py-2 text-xs"><option value="PCT_PRESENT">PCT Present</option><option value="PCT_NONE">No PCT</option></select></div>
-          <button onClick={onStartFromPlan} className="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5"/> Start/Reset from Saved Plan</button>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={generateCurrentRecommendation} className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs font-black flex items-center gap-1"><Play className="w-3.5 h-3.5"/> Generate Current Recommendation</button>
-          <button onClick={snapshotCurrent} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><Save className="w-3.5 h-3.5"/> Snapshot Current State</button>
-        </div>
+        <div className="flex flex-wrap gap-3 items-end"><div><label className="text-[10px] uppercase font-black text-slate-500 block mb-1">MT Coverage</label><select value={currentShift.mtState} onChange={e => updateSupport('MT', e.target.value)} className="border rounded-lg px-3 py-2 text-xs"><option value="MT_PRESENT">MT Present</option><option value="RN_COVERING_MT">RN Covering MT</option><option value="MT_UNFILLED">MT Unfilled</option></select></div><div><label className="text-[10px] uppercase font-black text-slate-500 block mb-1">PCT Support</label><select value={currentShift.pctState} onChange={e => updateSupport('PCT', e.target.value)} className="border rounded-lg px-3 py-2 text-xs"><option value="PCT_PRESENT">PCT Present</option><option value="PCT_NONE">No PCT</option></select></div><button onClick={onStartFromPlan} className="px-3 py-2 rounded-lg border border-slate-300 text-xs font-bold flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5"/> Start/Reset from Saved Plan</button></div>
+        <div className="flex gap-2"><button onClick={generateCurrentRecommendation} className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs font-black flex items-center gap-1"><Play className="w-3.5 h-3.5"/> Generate Current Recommendation</button><button onClick={snapshotCurrent} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><Save className="w-3.5 h-3.5"/> Snapshot Current State</button></div>
       </div>
 
       {unassigned.length > 0 && <div className="bg-rose-50 border border-rose-300 text-rose-800 rounded-xl p-3 text-sm font-bold flex items-center gap-2"><AlertTriangle className="w-4 h-4"/> Current capacity gap: rooms {unassigned.join(', ')} require Charge Nurse review.</div>}
 
+      <CurrentRosterPanel roster={currentShift.roster} onRosterChange={updateCurrentRoster} />
+
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="p-4 border-b border-slate-200 flex items-center gap-2"><Users className="w-4 h-4"/><h3 className="font-black text-sm uppercase tracking-wide">Live Staff Status</h3></div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead className="bg-slate-50 text-slate-500 uppercase"><tr><th className="text-left p-3">Staff</th><th className="text-left p-3">Role</th><th className="text-left p-3">Capability</th><th className="text-left p-3">Status</th><th className="text-left p-3">Current Rooms / Function</th><th className="text-left p-3">Phone</th></tr></thead>
-            <tbody>{currentShift.roster.map(staff => {
-              const assigned = currentShift.rooms.filter(r => r.assignedNurseId === staff.id).map(r => r.roomNumber).join(', ');
-              const functionText = staff.role === 'CHG' ? (assigned ? `CHG • ${assigned}` : 'Charge / Leadership') : staff.role === 'MT' ? 'Central Monitor' : staff.role === 'PCT' ? 'PCT Support' : assigned || 'No bedside assignment';
-              return <tr key={staff.id} className="border-t border-slate-100"><td className="p-3 font-bold">{staff.name}</td><td className="p-3">{staff.role}</td><td className="p-3">{staff.capability.replace('_','/')}</td><td className="p-3"><select value={staff.staffStatus} onChange={e => updateStaffStatus(staff, e.target.value as StaffStatus)} className="border rounded px-2 py-1"><option>ACTIVE</option><option>FLEXED</option><option>ON_CALL</option><option>RECALLED</option></select>{staff.staffStatus === 'RECALLED' && staff.actualRecallTime && <div className="text-[10px] text-emerald-700 mt-1">Recalled {fmtTime(staff.actualRecallTime)}</div>}</td><td className="p-3">{functionText}</td><td className="p-3 font-mono">{staff.assignedPhone || '-'}</td></tr>;
-            })}</tbody>
-          </table>
-        </div>
+        <div className="overflow-x-auto"><table className="w-full text-xs"><thead className="bg-slate-50 text-slate-500 uppercase"><tr><th className="text-left p-3">Staff</th><th className="text-left p-3">Role</th><th className="text-left p-3">Capability</th><th className="text-left p-3">Status</th><th className="text-left p-3">Current Rooms / Function</th><th className="text-left p-3">Phone</th></tr></thead><tbody>{currentShift.roster.map(staff => { const assigned = currentShift.rooms.filter(r => r.assignedNurseId === staff.id).map(r => r.roomNumber).join(', '); const functionText = staff.role === 'CHG' ? (assigned ? `CHG • ${assigned}` : 'Charge / Leadership') : staff.role === 'MT' ? 'Central Monitor' : staff.role === 'PCT' ? 'PCT Support' : assigned || 'No bedside assignment'; return <tr key={staff.id} className="border-t border-slate-100"><td className="p-3 font-bold">{staff.name}</td><td className="p-3">{staff.role}</td><td className="p-3">{staff.capability.replace('_','/')}</td><td className="p-3"><select value={staff.staffStatus} onChange={e => updateStaffStatus(staff, e.target.value as StaffStatus)} className="border rounded px-2 py-1"><option>ACTIVE</option><option>FLEXED</option><option>ON_CALL</option><option>RECALLED</option></select>{staff.staffStatus === 'RECALLED' && staff.actualRecallTime && <div className="text-[10px] text-emerald-700 mt-1">Recalled {fmtTime(staff.actualRecallTime)}</div>}</td><td className="p-3">{functionText}</td><td className="p-3 font-mono">{staff.assignedPhone || '-'}</td></tr>; })}</tbody></table></div>
       </div>
 
-      <FloorPlanCurrentStaffing
-        currentShift={currentShift}
-        onRoomChange={updateRoom}
-        onAssignRoom={assignRoom}
-        onStaffStatusChange={updateStaffStatus}
-      />
+      <FloorPlanCurrentStaffing currentShift={currentShift} onRoomChange={updateRoom} onAssignRoom={assignRoom} onStaffStatusChange={updateStaffStatus} />
 
-      <div className="bg-white rounded-xl border border-slate-200 p-4">
-        <h3 className="font-black text-sm uppercase tracking-wide mb-3">Midshift Operational Event Log</h3>
-        {shiftEvents.length === 0 ? <p className="text-xs text-slate-500">No recorded changes for this shift yet.</p> : <div className="space-y-2">{shiftEvents.map(event => <div key={event.id} className="flex gap-3 text-xs border-b border-slate-100 pb-2"><span className="font-mono text-slate-500 w-16 shrink-0">{fmtTime(event.timestamp)}</span><span><b>{event.type.replaceAll('_',' ')}</b> — {event.summary}</span></div>)}</div>}
-      </div>
+      <div className="bg-white rounded-xl border border-slate-200 p-4"><h3 className="font-black text-sm uppercase tracking-wide mb-3">Midshift Operational Event Log</h3>{shiftEvents.length === 0 ? <p className="text-xs text-slate-500">No recorded changes for this shift yet.</p> : <div className="space-y-2">{shiftEvents.map(event => <div key={event.id} className="flex gap-3 text-xs border-b border-slate-100 pb-2"><span className="font-mono text-slate-500 w-16 shrink-0">{fmtTime(event.timestamp)}</span><span><b>{event.type.replaceAll('_',' ')}</b> — {event.summary}</span></div>)}</div>}</div>
     </div>
   );
 };
