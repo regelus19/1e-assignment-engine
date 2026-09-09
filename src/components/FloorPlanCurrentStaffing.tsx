@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   Users,
   Wind,
+  X,
 } from 'lucide-react';
 import floorPlanImage from '../assets/1e-floorplan.png';
 import {
@@ -90,10 +91,13 @@ const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
 
 export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoomChange, onAssignRoom, onStaffStatusChange }) => {
   const occupiedRooms = currentShift.rooms.filter(r => r.isOccupied);
+  const unassignedRooms = occupiedRooms.filter(r => !r.assignedNurseId);
   const [selectedRoomNumber, setSelectedRoomNumber] = useState<string>(() => occupiedRooms[0]?.roomNumber || '104');
+  const [manualStaffId, setManualStaffId] = useState<string | null>(null);
 
   const selectedRoom = currentShift.rooms.find(r => r.roomNumber === selectedRoomNumber) || currentShift.rooms[0];
   const assignedNurse = currentShift.roster.find(s => s.id === selectedRoom?.assignedNurseId);
+  const manualStaff = currentShift.roster.find(s => s.id === manualStaffId) || null;
 
   const bedsideStaff = useMemo(
     () => currentShift.roster.filter(s => s.role === 'RN' || s.role === 'CHG'),
@@ -102,24 +106,23 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
 
   const setSelectedAcuity = (acuity: AcuityLevel) => {
     if (!selectedRoom) return;
-    onRoomChange({
-      ...selectedRoom,
-      acuity,
-      isOccupied: true,
-    });
+    onRoomChange({ ...selectedRoom, acuity, isOccupied: true });
   };
 
   const toggleFlag = (flag: ComplexityFlag) => {
     if (!selectedRoom) return;
     const exists = selectedRoom.flags.includes(flag);
-    onRoomChange({
-      ...selectedRoom,
-      flags: exists ? selectedRoom.flags.filter(f => f !== flag) : [...selectedRoom.flags, flag],
-    });
+    onRoomChange({ ...selectedRoom, flags: exists ? selectedRoom.flags.filter(f => f !== flag) : [...selectedRoom.flags, flag] });
   };
 
   const roomCountFor = (staffId: string) => currentShift.rooms.filter(r => r.isOccupied && r.assignedNurseId === staffId).length;
   const assignedRoomsFor = (staffId: string) => currentShift.rooms.filter(r => r.isOccupied && r.assignedNurseId === staffId);
+
+  const handleRoomClick = (room: PatientRoom) => {
+    setSelectedRoomNumber(room.roomNumber);
+    if (!manualStaffId || !room.isOccupied) return;
+    onAssignRoom(room.roomNumber, room.assignedNurseId === manualStaffId ? null : manualStaffId);
+  };
 
   return (
     <div className="space-y-4">
@@ -130,8 +133,7 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
             <div className="space-y-2">
               {(Object.keys(ACUITY_STYLES) as AcuityLevel[]).map(level => (
                 <button type="button" key={level} onClick={() => setSelectedAcuity(level)} className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border text-xs font-black text-left hover:ring-2 hover:ring-slate-200 ${ACUITY_STYLES[level].badge}`}>
-                  <span className={`w-3.5 h-3.5 rounded-full ${ACUITY_STYLES[level].dot}`} />
-                  {level}
+                  <span className={`w-3.5 h-3.5 rounded-full ${ACUITY_STYLES[level].dot}`} />{level}
                 </button>
               ))}
             </div>
@@ -140,30 +142,29 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
 
           <div className="bg-white border border-slate-200 rounded-xl p-3">
             <h3 className="font-black text-sm text-slate-800 mb-2">Quick Flags</h3>
-            <div className="space-y-1.5">
-              {FLAGS.map(({ flag, icon }) => (
-                <div key={flag} className="flex items-center gap-2 text-[11px] text-slate-700">
-                  <span className="text-slate-500">{icon}</span><span>{flag}</span>
-                </div>
-              ))}
-            </div>
+            <div className="space-y-1.5">{FLAGS.map(({ flag, icon }) => <div key={flag} className="flex items-center gap-2 text-[11px] text-slate-700"><span className="text-slate-500">{icon}</span><span>{flag}</span></div>)}</div>
           </div>
 
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] leading-5 text-amber-950">
             <div className="font-black mb-1">Unit rules</div>
-            <div>• HD only in ICU-capable rooms.</div>
-            <div>• Rooms 109 and 119 are safety-preferred.</div>
-            <div>• Geography is optimized after capability and safe workload.</div>
+            <div>• HD only in ICU-capable rooms.</div><div>• Rooms 109 and 119 are safety-preferred.</div><div>• Geography is optimized after capability and safe workload.</div>
           </div>
         </aside>
 
         <section className="min-w-0 space-y-3">
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap justify-between gap-2 items-center">
+          {manualStaff && (
+            <div className="bg-indigo-50 border-2 border-indigo-400 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="font-black text-sm text-slate-900">1 East Floor Plan — Current Staffing</h2>
-                <p className="text-[11px] text-slate-500">Click a room to edit acuity, flags, occupancy and assignment. Colored rooms show current acuity.</p>
+                <div className="text-xs font-black uppercase text-indigo-900">Rapid Manual Assignment Mode</div>
+                <div className="text-sm text-indigo-900 mt-0.5"><b>{firstName(manualStaff.name)}</b> selected. Click occupied rooms on the floor plan to assign them. Click an already-assigned room again to remove it from {firstName(manualStaff.name)}.</div>
               </div>
+              <button type="button" onClick={() => setManualStaffId(null)} className="bg-white border border-indigo-300 rounded-lg px-3 py-2 text-xs font-bold text-indigo-800 flex items-center gap-1"><X className="w-3.5 h-3.5"/> Exit Manual Mode</button>
+            </div>
+          )}
+
+          <div className={`bg-white border rounded-xl overflow-hidden ${manualStaff ? 'border-indigo-300' : 'border-slate-200'}`}>
+            <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap justify-between gap-2 items-center">
+              <div><h2 className="font-black text-sm text-slate-900">1 East Floor Plan — Current Staffing</h2><p className="text-[11px] text-slate-500">{manualStaff ? `Manual mode: click rooms to assign to ${firstName(manualStaff.name)}.` : 'Click a room to edit acuity, flags, occupancy and assignment.'}</p></div>
               <div className="text-[11px] text-slate-500">Selected room: <b className="text-slate-900">{selectedRoom?.roomNumber || '—'}</b></div>
             </div>
 
@@ -171,143 +172,65 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
               <img src={floorPlanImage} alt="1 East unit floor plan" className="absolute inset-0 w-full h-full object-contain opacity-75" />
               <div className="absolute left-[1.2%] top-[1.2%] text-[10px] font-black text-slate-700 bg-white/90 rounded px-1.5 py-1 border border-slate-200">NORTH ↑</div>
               {currentShift.rooms.map(room => {
-                const pos = ROOM_POSITIONS[room.roomNumber];
-                if (!pos) return null;
+                const pos = ROOM_POSITIONS[room.roomNumber]; if (!pos) return null;
                 const selected = room.roomNumber === selectedRoom?.roomNumber;
+                const isUnassigned = room.isOccupied && !room.assignedNurseId;
+                const belongsToManual = !!manualStaffId && room.assignedNurseId === manualStaffId;
                 const roomStyle = room.isOccupied ? ACUITY_STYLES[room.acuity].room : 'bg-white/85 border-slate-400 text-slate-500';
                 const nurse = currentShift.roster.find(s => s.id === room.assignedNurseId);
-                return (
-                  <button
-                    type="button"
-                    key={room.roomNumber}
-                    onClick={() => setSelectedRoomNumber(room.roomNumber)}
-                    className={`absolute -translate-x-1/2 -translate-y-1/2 w-[5.4%] min-w-[42px] rounded-md border-2 shadow-sm px-1 py-1 text-center transition ${roomStyle} ${selected ? 'ring-4 ring-slate-900/25 z-20 scale-110' : 'z-10 hover:scale-105'}`}
-                    style={{ left: `${pos.left}%`, top: `${pos.top}%` }}
-                    title={`Room ${room.roomNumber}${nurse ? ` • ${nurse.name}` : ''}`}
-                  >
-                    <div className="font-black text-[11px] leading-none">{room.roomNumber}</div>
-                    <div className="text-[8px] font-bold leading-tight mt-0.5">{room.isOccupied ? room.acuity : 'EMPTY'}</div>
-                    {room.isOccupied && <div className="text-[8px] leading-tight truncate mt-0.5">{nurse ? firstName(nurse.name) : 'UNASSIGNED'}</div>}
-                    {room.flags.length > 0 && <div className="text-[8px] font-black leading-none mt-0.5">+{room.flags.length} flag{room.flags.length === 1 ? '' : 's'}</div>}
-                  </button>
-                );
+                return <button type="button" key={room.roomNumber} onClick={() => handleRoomClick(room)} className={`absolute -translate-x-1/2 -translate-y-1/2 w-[5.4%] min-w-[42px] rounded-md border-2 shadow-sm px-1 py-1 text-center transition ${roomStyle} ${selected ? 'ring-4 ring-slate-900/25 z-20 scale-110' : 'z-10 hover:scale-105'} ${isUnassigned ? 'outline outline-4 outline-rose-500/70' : ''} ${belongsToManual ? 'ring-4 ring-indigo-500/70 z-20' : ''}`} style={{ left: `${pos.left}%`, top: `${pos.top}%` }} title={`Room ${room.roomNumber}${nurse ? ` • ${nurse.name}` : ''}`}>
+                  <div className="font-black text-[11px] leading-none">{room.roomNumber}</div>
+                  <div className="text-[8px] font-bold leading-tight mt-0.5">{room.isOccupied ? room.acuity : 'EMPTY'}</div>
+                  {room.isOccupied && <div className={`text-[8px] leading-tight truncate mt-0.5 ${isUnassigned ? 'font-black text-rose-800' : ''}`}>{nurse ? firstName(nurse.name) : 'UNASSIGNED'}</div>}
+                  {room.flags.length > 0 && <div className="text-[8px] font-black leading-none mt-0.5">+{room.flags.length} flag{room.flags.length === 1 ? '' : 's'}</div>}
+                </button>;
               })}
+            </div>
+          </div>
+
+          <div className={`rounded-xl border p-3 ${unassignedRooms.length ? 'bg-rose-50 border-rose-300' : 'bg-emerald-50 border-emerald-300'}`}>
+            <div className="flex flex-wrap justify-between gap-2 items-center">
+              <div><div className={`text-xs font-black uppercase ${unassignedRooms.length ? 'text-rose-900' : 'text-emerald-900'}`}>Rooms Needing Assignment</div><div className="text-[10px] text-slate-600 mt-0.5">Occupied rooms only. Click a room chip to jump to it.</div></div>
+              <div className={`text-lg font-black ${unassignedRooms.length ? 'text-rose-700' : 'text-emerald-700'}`}>{unassignedRooms.length}</div>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {unassignedRooms.map(room => <button key={room.roomNumber} type="button" onClick={() => setSelectedRoomNumber(room.roomNumber)} className={`px-2 py-1.5 rounded-lg border text-[10px] font-black ${ACUITY_STYLES[room.acuity].badge}`}>{room.roomNumber} • {room.acuity}</button>)}
+              {unassignedRooms.length === 0 && <span className="text-xs font-bold text-emerald-800">All occupied rooms have an RN assignment.</span>}
             </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-3">
             <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
-              <div>
-                <h3 className="font-black text-sm text-slate-900">RN Assignments</h3>
-                <p className="text-[11px] text-slate-500">Select a room above, then click an RN card to assign it. Status can change midshift.</p>
-              </div>
-              <div className="text-[11px] text-slate-500">Total patients: <b>{occupiedRooms.length}</b> • Unassigned: <b>{occupiedRooms.filter(r => !r.assignedNurseId).length}</b></div>
+              <div><h3 className="font-black text-sm text-slate-900">RN Assignments</h3><p className="text-[11px] text-slate-500">For rapid assignment, click an RN card to select that nurse, then click multiple rooms on the map.</p></div>
+              <div className="text-[11px] text-slate-500">Total patients: <b>{occupiedRooms.length}</b> • Unassigned: <b className={unassignedRooms.length ? 'text-rose-700' : ''}>{unassignedRooms.length}</b></div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2.5">
               {bedsideStaff.map(staff => {
                 const assigned = assignedRoomsFor(staff.id);
                 const canAssign = staff.staffStatus === 'ACTIVE' || staff.staffStatus === 'RECALLED';
-                return (
-                  <div key={staff.id} className="border border-slate-200 rounded-xl p-2.5 bg-slate-50">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="font-black text-sm text-slate-900 truncate">{firstName(staff.name)}</div>
-                        <div className="text-[10px] text-slate-500">{staff.role} • {staff.capability} • {roomCountFor(staff.id)} pt{roomCountFor(staff.id) === 1 ? '' : 's'}</div>
-                      </div>
-                      <select
-                        value={staff.staffStatus}
-                        onChange={e => onStaffStatusChange(staff, e.target.value as StaffStatus)}
-                        className={`text-[9px] font-black border rounded-md px-1.5 py-1 ${STATUS_STYLES[staff.staffStatus]}`}
-                      >
-                        <option value="ACTIVE">ACTIVE</option>
-                        <option value="FLEXED">FLEXED</option>
-                        <option value="ON_CALL">ON CALL</option>
-                        <option value="RECALLED">RECALLED</option>
-                      </select>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1 mt-2 min-h-7">
-                      {assigned.map(room => (
-                        <button key={room.roomNumber} type="button" onClick={() => setSelectedRoomNumber(room.roomNumber)} className={`border rounded-md px-1.5 py-1 text-[9px] font-black ${ACUITY_STYLES[room.acuity].badge}`}>
-                          {room.roomNumber} {room.acuity}
-                        </button>
-                      ))}
-                      {assigned.length === 0 && <span className="text-[10px] text-slate-400">No current rooms</span>}
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={!selectedRoom?.isOccupied || !canAssign}
-                      onClick={() => selectedRoom && onAssignRoom(selectedRoom.roomNumber, staff.id)}
-                      className="mt-2 w-full border border-slate-300 bg-white rounded-lg py-1.5 text-[10px] font-bold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100"
-                    >
-                      Assign selected room {selectedRoom?.roomNumber || ''}
-                    </button>
+                const manualSelected = manualStaffId === staff.id;
+                return <div key={staff.id} className={`border-2 rounded-xl p-2.5 transition ${manualSelected ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200' : 'border-slate-200 bg-slate-50'}`}>
+                  <div className="flex items-start justify-between gap-2"><button type="button" disabled={!canAssign} onClick={() => setManualStaffId(manualSelected ? null : staff.id)} className="min-w-0 text-left disabled:cursor-not-allowed disabled:opacity-50"><div className="font-black text-sm text-slate-900 truncate">{firstName(staff.name)}</div><div className="text-[10px] text-slate-500">{staff.role} • {staff.capability} • {roomCountFor(staff.id)} pt{roomCountFor(staff.id) === 1 ? '' : 's'}</div><div className={`mt-1 text-[9px] font-black ${manualSelected ? 'text-indigo-700' : 'text-blue-700'}`}>{manualSelected ? 'SELECTED — CLICK ROOMS' : canAssign ? 'CLICK NAME FOR RAPID ASSIGN' : 'NOT ACTIVE FOR ASSIGNMENT'}</div></button>
+                    <select value={staff.staffStatus} onChange={e => onStaffStatusChange(staff, e.target.value as StaffStatus)} className={`text-[9px] font-black border rounded-md px-1.5 py-1 ${STATUS_STYLES[staff.staffStatus]}`}><option value="ACTIVE">ACTIVE</option><option value="FLEXED">FLEXED</option><option value="ON_CALL">ON CALL</option><option value="RECALLED">RECALLED</option></select>
                   </div>
-                );
+                  <div className="flex flex-wrap gap-1 mt-2 min-h-7">{assigned.map(room => <button key={room.roomNumber} type="button" onClick={() => setSelectedRoomNumber(room.roomNumber)} className={`border rounded-md px-1.5 py-1 text-[9px] font-black ${ACUITY_STYLES[room.acuity].badge}`}>{room.roomNumber} {room.acuity}</button>)}{assigned.length === 0 && <span className="text-[10px] text-slate-400">No current rooms</span>}</div>
+                  <button type="button" disabled={!selectedRoom?.isOccupied || !canAssign} onClick={() => selectedRoom && onAssignRoom(selectedRoom.roomNumber, staff.id)} className="mt-2 w-full border border-slate-300 bg-white rounded-lg py-1.5 text-[10px] font-bold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100">Assign selected room {selectedRoom?.roomNumber || ''}</button>
+                </div>;
               })}
             </div>
           </div>
         </section>
 
         <aside className="bg-white border border-slate-200 rounded-xl p-4 2xl:sticky 2xl:top-4">
-          {selectedRoom ? (
-            <>
-              <div className="flex items-start justify-between gap-2 border-b border-slate-200 pb-3">
-                <div>
-                  <div className="text-xl font-black text-slate-900">Room {selectedRoom.roomNumber}</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">Live room detail</div>
-                </div>
-                <label className="flex items-center gap-2 text-[10px] font-bold text-slate-600">
-                  <input type="checkbox" checked={selectedRoom.isOccupied} onChange={e => onRoomChange({ ...selectedRoom, isOccupied: e.target.checked, assignedNurseId: e.target.checked ? selectedRoom.assignedNurseId : null })} /> Occupied
-                </label>
-              </div>
-
-              <div className="mt-3">
-                <label className="text-[10px] uppercase font-black text-slate-500 block mb-1">Acuity / Level of Care</label>
-                <select value={selectedRoom.acuity} onChange={e => setSelectedAcuity(e.target.value as AcuityLevel)} className={`w-full border rounded-lg px-3 py-2 text-sm font-black ${ACUITY_STYLES[selectedRoom.acuity].badge}`}>
-                  <option value="CVICU">CVICU</option><option value="ICU">ICU</option><option value="PCU">PCU</option><option value="TELE">TELE</option>
-                </select>
-                {!selectedRoom.isOccupied && <div className="text-[9px] text-slate-500 mt-1">Choose an acuity to admit/occupy this room.</div>}
-              </div>
-
-              <div className="mt-3">
-                <label className="text-[10px] uppercase font-black text-slate-500 block mb-1">Assigned RN</label>
-                <select value={selectedRoom.assignedNurseId || ''} onChange={e => onAssignRoom(selectedRoom.roomNumber, e.target.value || null)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
-                  <option value="">Unassigned</option>
-                  {bedsideStaff.map(staff => <option key={staff.id} value={staff.id}>{firstName(staff.name)} — {staff.role} / {staff.capability} / {staff.staffStatus}</option>)}
-                </select>
-                {assignedNurse && <div className="mt-1.5 text-[10px] text-slate-500">Current: <b>{assignedNurse.name}</b> • {assignedNurse.assignedPhone || 'No phone entered'}</div>}
-              </div>
-
-              <div className="mt-3">
-                <label className="text-[10px] uppercase font-black text-slate-500 block mb-1">Non-PHI Stay Token</label>
-                <input value={selectedRoom.patientStayId} onChange={e => onRoomChange({ ...selectedRoom, patientStayId: e.target.value })} placeholder="Optional continuity token" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
-              </div>
-
-              <div className="mt-4">
-                <div className="text-xs font-black text-slate-900 mb-2">Quick Flags</div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {FLAGS.map(({ flag, icon }) => {
-                    const active = selectedRoom.flags.includes(flag);
-                    return (
-                      <button type="button" key={flag} onClick={() => toggleFlag(flag)} className={`min-h-9 flex items-center gap-1.5 justify-start px-2 py-1.5 rounded-lg border text-[10px] font-bold text-left ${active ? 'bg-blue-50 border-blue-400 text-blue-800 ring-1 ring-blue-200' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>
-                        {icon}<span>{flag}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="mt-4 pt-3 border-t border-slate-200">
-                <div className="text-xs font-black text-slate-900">Room notes</div>
-                <div className="mt-1 text-[10px] text-slate-500 leading-4">
-                  {selectedRoom.roomNumber === '109' || selectedRoom.roomNumber === '119' ? 'Safety-preferred room near nursing station.' : 'No special safety-room preference.'}
-                </div>
-              </div>
-            </>
-          ) : <div className="text-sm text-slate-500">Select a room on the map.</div>}
+          {selectedRoom ? <>
+            <div className="flex items-start justify-between gap-2 border-b border-slate-200 pb-3"><div><div className="text-xl font-black text-slate-900">Room {selectedRoom.roomNumber}</div><div className="text-[11px] text-slate-500 mt-0.5">Live room detail</div></div><label className="flex items-center gap-2 text-[10px] font-bold text-slate-600"><input type="checkbox" checked={selectedRoom.isOccupied} onChange={e => onRoomChange({ ...selectedRoom, isOccupied: e.target.checked, assignedNurseId: e.target.checked ? selectedRoom.assignedNurseId : null })} /> Occupied</label></div>
+            <div className="mt-3"><label className="text-[10px] uppercase font-black text-slate-500 block mb-1">Acuity / Level of Care</label><select value={selectedRoom.acuity} onChange={e => setSelectedAcuity(e.target.value as AcuityLevel)} className={`w-full border rounded-lg px-3 py-2 text-sm font-black ${ACUITY_STYLES[selectedRoom.acuity].badge}`}><option value="CVICU">CVICU</option><option value="ICU">ICU</option><option value="PCU">PCU</option><option value="TELE">TELE</option></select>{!selectedRoom.isOccupied && <div className="text-[9px] text-slate-500 mt-1">Choose an acuity to admit/occupy this room.</div>}</div>
+            <div className="mt-3"><label className="text-[10px] uppercase font-black text-slate-500 block mb-1">Assigned RN</label><select value={selectedRoom.assignedNurseId || ''} onChange={e => onAssignRoom(selectedRoom.roomNumber, e.target.value || null)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"><option value="">Unassigned</option>{bedsideStaff.map(staff => <option key={staff.id} value={staff.id}>{firstName(staff.name)} — {staff.role} / {staff.capability} / {staff.staffStatus}</option>)}</select>{assignedNurse && <div className="mt-1.5 text-[10px] text-slate-500">Current: <b>{assignedNurse.name}</b> • {assignedNurse.assignedPhone || 'No phone entered'}</div>}</div>
+            <div className="mt-3"><label className="text-[10px] uppercase font-black text-slate-500 block mb-1">Non-PHI Stay Token</label><input value={selectedRoom.patientStayId} onChange={e => onRoomChange({ ...selectedRoom, patientStayId: e.target.value })} placeholder="Optional continuity token" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" /></div>
+            <div className="mt-4"><div className="text-xs font-black text-slate-900 mb-2">Quick Flags</div><div className="grid grid-cols-2 gap-1.5">{FLAGS.map(({ flag, icon }) => { const active = selectedRoom.flags.includes(flag); return <button type="button" key={flag} onClick={() => toggleFlag(flag)} className={`min-h-9 flex items-center gap-1.5 justify-start px-2 py-1.5 rounded-lg border text-[10px] font-bold text-left ${active ? 'bg-blue-50 border-blue-400 text-blue-800 ring-1 ring-blue-200' : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}`}>{icon}<span>{flag}</span></button>; })}</div></div>
+            <div className="mt-4 pt-3 border-t border-slate-200"><div className="text-xs font-black text-slate-900">Room notes</div><div className="mt-1 text-[10px] text-slate-500 leading-4">{selectedRoom.roomNumber === '109' || selectedRoom.roomNumber === '119' ? 'Safety-preferred room near nursing station.' : 'No special safety-room preference.'}</div></div>
+          </> : <div className="text-sm text-slate-500">Select a room on the map.</div>}
         </aside>
       </div>
     </div>
