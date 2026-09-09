@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
-  Bed,
   Brain,
   CircleDot,
   Droplets,
@@ -101,6 +100,15 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
     [currentShift.roster],
   );
 
+  const setSelectedAcuity = (acuity: AcuityLevel) => {
+    if (!selectedRoom) return;
+    onRoomChange({
+      ...selectedRoom,
+      acuity,
+      isOccupied: true,
+    });
+  };
+
   const toggleFlag = (flag: ComplexityFlag) => {
     if (!selectedRoom) return;
     const exists = selectedRoom.flags.includes(flag);
@@ -121,12 +129,13 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
             <h3 className="font-black text-sm text-slate-800 mb-2">Acuity / Level of Care</h3>
             <div className="space-y-2">
               {(Object.keys(ACUITY_STYLES) as AcuityLevel[]).map(level => (
-                <div key={level} className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border text-xs font-black ${ACUITY_STYLES[level].badge}`}>
+                <button type="button" key={level} onClick={() => setSelectedAcuity(level)} className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border text-xs font-black text-left hover:ring-2 hover:ring-slate-200 ${ACUITY_STYLES[level].badge}`}>
                   <span className={`w-3.5 h-3.5 rounded-full ${ACUITY_STYLES[level].dot}`} />
                   {level}
-                </div>
+                </button>
               ))}
             </div>
+            <p className="text-[9px] text-slate-500 mt-2 leading-4">Selecting an acuity for an empty room marks that room occupied and updates census.</p>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-3">
@@ -257,9 +266,10 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
 
               <div className="mt-3">
                 <label className="text-[10px] uppercase font-black text-slate-500 block mb-1">Acuity / Level of Care</label>
-                <select value={selectedRoom.acuity} onChange={e => onRoomChange({ ...selectedRoom, acuity: e.target.value as AcuityLevel })} className={`w-full border rounded-lg px-3 py-2 text-sm font-black ${ACUITY_STYLES[selectedRoom.acuity].badge}`}>
+                <select value={selectedRoom.acuity} onChange={e => setSelectedAcuity(e.target.value as AcuityLevel)} className={`w-full border rounded-lg px-3 py-2 text-sm font-black ${ACUITY_STYLES[selectedRoom.acuity].badge}`}>
                   <option value="CVICU">CVICU</option><option value="ICU">ICU</option><option value="PCU">PCU</option><option value="TELE">TELE</option>
                 </select>
+                {!selectedRoom.isOccupied && <div className="text-[9px] text-slate-500 mt-1">Choose an acuity to admit/occupy this room.</div>}
               </div>
 
               <div className="mt-3">
