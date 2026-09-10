@@ -8,6 +8,14 @@ const isClinicallyQualified = (n: NurseStaff, r: PatientRoom) =>
   n.capability === 'CVICU' ||
   (n.capability === 'ICU' ? ['ICU', 'PCU', 'TELE'].includes(r.acuity) : ['PCU', 'TELE'].includes(r.acuity));
 
+const createsNonIdeal103IcuPair = (assigned: PatientRoom[], room: PatientRoom): boolean => {
+  if (room.acuity !== 'ICU') return false;
+  const candidateRooms = [...assigned, room];
+  const has103Icu = candidateRooms.some(r => r.roomNumber === '103' && r.acuity === 'ICU');
+  if (!has103Icu) return false;
+  return candidateRooms.some(r => r.roomNumber !== '103' && r.acuity === 'ICU' && ROOM_METADATA_MAP[r.roomNumber]?.hall === 'A');
+};
+
 const workloadBlockReason = (n: NurseStaff, assigned: PatientRoom[], room: PatientRoom, allowTeleQuad: boolean): string | null => {
   const cvicu = assigned.filter(x => x.acuity === 'CVICU').length;
   const icu = assigned.filter(x => x.acuity === 'ICU').length;
@@ -106,6 +114,11 @@ export function runRecommendationEngine(
         candidateReasons.push(geo.reason);
       } else candidate += 20;
 
+      if (createsNonIdeal103IcuPair(assigned, room)) {
+        candidate -= 100;
+        candidateReasons.push('⚠ avoids pairing Room 103 ICU with another Hall A ICU unless necessary');
+      }
+
       if (strategy === 'BALANCED') {
         if (room.acuity === 'ICU' && assignedICU === 0) { candidate += 18; candidateReasons.push('✓ spreads ICU workload'); }
         if (room.acuity === 'ICU' && assignedICU === 1) { candidate -= 18; candidateReasons.push('• avoids pairing ICU when spread is available'); }
@@ -141,6 +154,10 @@ export function runRecommendationEngine(
     const nums = st.assignedRooms.map(r => r.roomNumber);
     const geo = evaluateGeographicCluster(nums);
     if (geo.advisory) warnings.push({ type: 'GEOGRAPHY', severity: 'MEDIUM', nurseName: st.nurse.name, message: `${st.nurse.name}'s assignment (${nums.join(', ')}) spans separated zones: ${geo.reason}.` });
+    if (st.assignedRooms.some(r => r.roomNumber === '103' && r.acuity === 'ICU') && st.assignedRooms.some(r => r.roomNumber !== '103' && r.acuity === 'ICU' && ROOM_METADATA_MAP[r.roomNumber]?.hall === 'A')) {
+      const pairedHallARooms = st.assignedRooms.filter(r => r.roomNumber !== '103' && r.acuity === 'ICU' && ROOM_METADATA_MAP[r.roomNumber]?.hall === 'A').map(r => r.roomNumber);
+      warnings.push({ type: 'GEOGRAPHY', severity: 'MEDIUM', nurseName: st.nurse.name, roomNumber: '103', message: `Non-ideal ICU pairing: Room 103 ICU is paired with Hall A ICU room ${pairedHallARooms.join(', ')} for ${st.nurse.name}. Prefer splitting this pair when skill mix allows.` });
+    }
     if (st.nurse.role === 'CHG' && st.assignedRooms.length) warnings.push({ type: 'WORKLOAD_RATIO', severity: 'MEDIUM', nurseName: st.nurse.name, message: `Charge RN exception: ${st.nurse.name} assigned ${st.assignedRooms.map(r => r.roomNumber).join(', ')}.` });
     if (st.assignedRooms.length === 4 && st.assignedRooms.every(r => r.acuity === 'TELE')) warnings.push({ type: 'WORKLOAD_RATIO', severity: 'MEDIUM', nurseName: st.nurse.name, message: `TELE quad exception: ${st.nurse.name} assigned ${st.assignedRooms.map(r => r.roomNumber).join(', ')}.` });
   });
