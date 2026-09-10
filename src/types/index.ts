@@ -6,10 +6,10 @@ export type PCTCoverageState = 'PCT_PRESENT' | 'PCT_NONE';
 export type AcuityLevel = 'CVICU' | 'ICU' | 'PCU' | 'TELE';
 export type ComplexityFlag = 'Vent' | 'Pressors' | 'Impella/IABP' | 'Fresh Post-Op' | 'HD/Dialysis' | 'Isolation' | 'Sitter/Safety' | 'High Fall Risk' | 'Confused' | 'Admission' | 'Transfer' | 'Possible DC' | 'Expected DC' | 'BLOCKED' | 'Discharge';
 export interface RoomMetadata { roomNumber: string; hall: 'A' | 'B' | 'C'; zone: 'Upper' | 'Mid' | 'Lower'; isICUCapable: boolean; isSafetyPreferred: boolean; proximityGroups: string[]; adjacentRooms: string[]; }
-export interface PatientRoom { roomNumber: string; isOccupied: boolean; patientStayId: string; acuity: AcuityLevel; flags: ComplexityFlag[]; assignedNurseId: string | null; }
+export interface PatientRoom { roomNumber: string; isOccupied: boolean; patientStayId: string; acuity: AcuityLevel; acuityConfirmed?: boolean; flags: ComplexityFlag[]; assignedNurseId: string | null; }
 export interface NurseStaff { id: string; name: string; role: StaffRole; assignedPhone: string; capability: CapabilityLevel; staffStatus: StaffStatus; plannedReturnTime?: string; actualRecallTime?: string; coveringMT?: boolean; orientationPartnerId?: string; }
 export interface OnCallProviders { intensivist: string; cardiothoracic: string; acuteMI: string; cardiology: string; hospitalist: string; }
-export interface AssignmentWarning { type: 'CAPABILITY' | 'DIALYSIS_ROOM' | 'WORKLOAD_RATIO' | 'GEOGRAPHY' | 'SAFETY_ROOM'; severity: 'HIGH' | 'MEDIUM' | 'INFO'; message: string; roomNumber?: string; nurseName?: string; }
+export interface AssignmentWarning { type: 'CAPABILITY' | 'DIALYSIS_ROOM' | 'WORKLOAD_RATIO' | 'GEOGRAPHY' | 'SAFETY_ROOM' | 'ACUITY_MISSING'; severity: 'HIGH' | 'MEDIUM' | 'INFO'; message: string; roomNumber?: string; nurseName?: string; }
 export interface NurseRecommendationDetail { nurseId: string; nurseName: string; assignedRooms: string[]; reasons: string[]; workloadScore: number; }
 export interface RecommendationResult { assignments: Record<string, string>; nurseDetails: NurseRecommendationDetail[]; warnings: AssignmentWarning[]; fitScore: number; fitLabel: 'HIGH FIT' | 'MODERATE FIT' | 'REQUIRES REVIEW'; unassignedRooms: string[]; }
 export interface FinalizedShiftSnapshot { id: string; date: string; shiftType: 'Day' | 'Night'; finalizedAt: string; roster: NurseStaff[]; rooms: PatientRoom[]; onCall: OnCallProviders; fitScore: number; warnings: AssignmentWarning[]; mtState: MTCoverageState; pctState: PCTCoverageState; currentMRS: number; projectedMRS: number; }
