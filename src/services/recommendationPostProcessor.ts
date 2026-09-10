@@ -45,10 +45,7 @@ const syncNurseDetails = (result: RecommendationResult, rooms: PatientRoom[]) =>
   });
 };
 
-// Special four-room correction seen in real 1E workflow:
-// if 103/104/113/114 are all ICU and the engine cross-pairs 103+113 and 104+114,
-// keep the same two qualified nurses but regroup the patients as 103+104 and 113+114.
-function repairFourRoomIcuCrossPair(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[]) {
+function repairFourRoomIcuCrossPair(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[], locked: Set<string>) {
   const quartet = ['103', '104', '113', '114'];
   const allIcu = quartet.every(num => rooms.some(r => r.roomNumber === num && r.isOccupied && r.acuity === 'ICU'));
   if (!allIcu) return;
@@ -59,6 +56,9 @@ function repairFourRoomIcuCrossPair(result: RecommendationResult, staff: NurseSt
   const nurse114 = result.assignments['114'];
   const crossPaired = nurse103 && nurse104 && nurse103 === nurse113 && nurse104 === nurse114 && nurse103 !== nurse104;
   if (!crossPaired) return;
+
+  // Never rewrite a room the Charge Nurse explicitly fixed in Semi-Auto mode.
+  if (quartet.some(r => locked.has(r))) return;
 
   const a = staff.find(n => n.id === nurse103);
   const b = staff.find(n => n.id === nurse104);
@@ -75,7 +75,7 @@ function repairFourRoomIcuCrossPair(result: RecommendationResult, staff: NurseSt
   });
 }
 
-function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[]): RecommendationResult {
+function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[], locked: Set<string>): RecommendationResult {
   const next: RecommendationResult = {
     ...result,
     assignments: { ...result.assignments },
@@ -83,7 +83,7 @@ function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[],
     warnings: [...result.warnings],
   };
 
-  repairFourRoomIcuCrossPair(next, staff, rooms);
+  repairFourRoomIcuCrossPair(next, staff, rooms, locked);
 
   for (const [a, b] of UNSAFE_ICU_PAIRS) {
     const roomA = rooms.find(r => r.roomNumber === a && r.isOccupied && r.acuity === 'ICU');
@@ -93,7 +93,7 @@ function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[],
     if (!nurseId || next.assignments[b] !== nurseId) continue;
 
     const currentNurse = staff.find(n => n.id === nurseId);
-    const moveChoices = [roomB, roomA];
+    const moveChoices = [roomB, roomA].filter(r => !locked.has(r.roomNumber));
     let best: { room: PatientRoom; nurse: NurseStaff; score: number } | null = null;
 
     for (const movingRoom of moveChoices) {
@@ -119,7 +119,9 @@ function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[],
     } else {
       next.warnings.push({
         type: 'GEOGRAPHY', severity: 'HIGH', roomNumber: a, nurseName: currentNurse?.name,
-        message: `Unsafe ICU pairing remains: rooms ${a} and ${b} are both ICU on the same RN. No safer staffed alternative was found; Charge Nurse review is required.`,
+        message: locked.has(a) || locked.has(b)
+          ? `Unsafe ICU pairing remains: rooms ${a} and ${b} are both ICU on the same RN and at least one room is CN-fixed in Semi-Auto mode. The engine will not override the Charge Nurse; review before applying.`
+          : `Unsafe ICU pairing remains: rooms ${a} and ${b} are both ICU on the same RN. No safer staffed alternative was found; Charge Nurse review is required.`,
       });
     }
   }
@@ -166,6 +168,7 @@ function addAdmissionReadyBeds(result: RecommendationResult, staff: NurseStaff[]
   return next;
 }
 
-export function postProcessRecommendation(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[]): RecommendationResult {
-  return addAdmissionReadyBeds(repairUnsafeIcuPairs(result, staff, rooms), staff, rooms);
+export function postProcessRecommendation(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[], lockedRoomNumbers: string[] = []): RecommendationResult {
+  const locked = new Set(lockedRoomNumbers);
+  return addAdmissionReadyBeds(repairUnsafeIcuPairs(result, staff, rooms, locked), staff, rooms);
 }
