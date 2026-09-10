@@ -13,9 +13,7 @@ interface Props {
   onMtStateChange: (value:MTCoverageState)=>void; onPctStateChange: (value:PCTCoverageState)=>void; onSaveBaseline: ()=>void;
 }
 
-const normalizeName=(value:string)=>value.trim().toLowerCase().replace(/\s+/g,' ');
-
-export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtState,pctState,onCall,sourceShift,onDateChange,onShiftTypeChange,onRosterChange,onRoomsChange,onMtStateChange,onPctStateChange,onSaveBaseline})=>{
+export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtState,pctState,onCall,onDateChange,onShiftTypeChange,onRosterChange,onRoomsChange,onMtStateChange,onPctStateChange,onSaveBaseline})=>{
   const [warnings,setWarnings]=useState<AssignmentWarning[]>([]);
   const [unassigned,setUnassigned]=useState<string[]>([]);
   const [fitLabel,setFitLabel]=useState('NOT RUN');
@@ -48,22 +46,8 @@ export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtSt
   const updateStatus=(staff:NurseStaff,status:NurseStaff['staffStatus'])=>onRosterChange(roster.map(s=>s.id===staff.id?{...s,staffStatus:status}:s));
   const resetRecallContext=()=>{setRecalledRooms(new Set());setManualRooms(new Set());setRecallMessage('');setRecommendationOptions([]);};
 
-  const findLiveContinuity=(room:PatientRoom)=>{
-    if(!room.patientStayId) return null;
-    const priorRoom=sourceShift.rooms.find(r=>r.patientStayId===room.patientStayId&&r.assignedNurseId);
-    if(!priorRoom?.assignedNurseId) return null;
-    const priorNurse=sourceShift.roster.find(s=>s.id===priorRoom.assignedNurseId);
-    if(!priorNurse) return null;
-    let returning=roster.find(s=>s.id===priorNurse.id&&['ACTIVE','RECALLED'].includes(s.staffStatus));
-    if(!returning){
-      const priorName=normalizeName(priorNurse.name);
-      returning=roster.find(s=>normalizeName(s.name)===priorName&&['ACTIVE','RECALLED'].includes(s.staffStatus));
-    }
-    return returning?{nurseId:returning.id,nurseName:returning.name}:null;
-  };
-
   const recallPreviousAssignments=()=>{
-    let recalled=0,liveMatches=0,historyMatches=0,missingToken=0,noMatch=0,manualPreserved=0;
+    let recalled=0,missingToken=0,noMatch=0,manualPreserved=0;
     const recalledNow=new Set<string>();
 
     const next=rooms.map(room=>{
@@ -71,16 +55,13 @@ export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtSt
       if(manualRooms.has(room.roomNumber) && room.assignedNurseId){manualPreserved+=1;return room;}
       if(!room.patientStayId){missingToken+=1;return {...room,assignedNurseId:null};}
 
-      const live=findLiveContinuity(room);
-      if(live){
-        recalled+=1;liveMatches+=1;recalledNow.add(room.roomNumber);
-        return {...room,assignedNurseId:live.nurseId};
-      }
-
-      const historical=StorageService.findContinuity(room.patientStayId,roster,date,shiftType);
-      if(historical){
-        recalled+=1;historyMatches+=1;recalledNow.add(room.roomNumber);
-        return {...room,assignedNurseId:historical.nurseId};
+      // IMPORTANT: continuity is same-shift continuity.
+      // Planning Day/AM recalls the most recent prior Day/AM assignment.
+      // Planning Night/PM recalls the most recent prior Night/PM assignment.
+      const priorSameShift=StorageService.findContinuity(room.patientStayId,roster,date,shiftType);
+      if(priorSameShift){
+        recalled+=1;recalledNow.add(room.roomNumber);
+        return {...room,assignedNurseId:priorSameShift.nurseId};
       }
 
       noMatch+=1;
@@ -89,11 +70,12 @@ export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtSt
 
     setRecalledRooms(recalledNow);
     onRoomsChange(next);
+    const shiftLabel=shiftType==='Day'?'AM/Day':'PM/Night';
     const message=recalled
-      ? `Recalled ${recalled} previous assignment${recalled===1?'':'s'}: ${liveMatches} from live Current Staffing${historyMatches?` + ${historyMatches} from finalized History`:''}. Auto-generated assignments were replaced; ${manualPreserved} CN-manual assignment${manualPreserved===1?' was':'s were'} preserved.`
-      : `No previous assignments recalled — ${missingToken} missing Stay Token • ${noMatch} no returning prior-nurse match • ${manualPreserved} CN-manual assignment${manualPreserved===1?'':'s'} preserved.`;
+      ? `Recalled ${recalled} assignment${recalled===1?'':'s'} from the most recent prior ${shiftLabel} shift. Auto-generated assignments were replaced; ${manualPreserved} CN-manual assignment${manualPreserved===1?' was':'s were'} preserved.`
+      : `No prior ${shiftLabel} continuity matches found — ${missingToken} missing Stay Token • ${noMatch} no returning same-shift nurse match • ${manualPreserved} CN-manual assignment${manualPreserved===1?'':'s'} preserved.`;
     setRecallMessage(message);
-    setFitLabel(recalled?`RECALLED ${recalled} PREVIOUS`:'NO PRIOR MATCHES');
+    setFitLabel(recalled?`RECALLED ${recalled} PRIOR ${shiftType==='Day'?'AM':'PM'}`:'NO SAME-SHIFT MATCHES');
     setRecommendationOptions([]);
   };
 
@@ -124,12 +106,12 @@ export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtSt
   };
 
   return <div className="space-y-5">
-    <div className="bg-slate-900 text-white rounded-xl p-4"><div className="flex flex-wrap justify-between gap-4"><div><div className="flex items-center gap-2"><CalendarDays className="w-4 h-4 text-blue-300"/><span className="text-xs uppercase font-black text-slate-300">Next Shift Plan</span></div><div className="text-xl font-black mt-1">{date} • {shiftType} Shift</div><div className="text-xs text-slate-400 mt-1">Auto first. If the CN wants more control: Recall Previous → adjust sickest/special cases → Semi-Auto Fill Rest.</div></div><div className="flex flex-wrap gap-2 text-xs"><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Planned Census <b>{census}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Active bedside RNs <b>{activeRNs}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Reserve <b>{reserve}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Recommendation <b>{fitLabel}</b></div></div></div></div>
+    <div className="bg-slate-900 text-white rounded-xl p-4"><div className="flex flex-wrap justify-between gap-4"><div><div className="flex items-center gap-2"><CalendarDays className="w-4 h-4 text-blue-300"/><span className="text-xs uppercase font-black text-slate-300">Next Shift Plan</span></div><div className="text-xl font-black mt-1">{date} • {shiftType} Shift</div><div className="text-xs text-slate-400 mt-1">Auto first. If the CN wants more control: Recall Previous same shift → adjust sickest/special cases → Semi-Auto Fill Rest.</div></div><div className="flex flex-wrap gap-2 text-xs"><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Planned Census <b>{census}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Active bedside RNs <b>{activeRNs}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Reserve <b>{reserve}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Recommendation <b>{fitLabel}</b></div></div></div></div>
 
-    <div className="bg-white rounded-xl border p-4 flex flex-wrap justify-between gap-3 items-end"><div className="flex flex-wrap gap-3 items-end"><div><label className="text-[10px] uppercase font-black text-slate-500 block">Next Shift Date</label><input type="date" value={date} onChange={e=>{onDateChange(e.target.value);resetRecallContext();}} className="border rounded-lg px-3 py-2 text-xs"/></div><div><label className="text-[10px] uppercase font-black text-slate-500 block">Shift</label><select value={shiftType} onChange={e=>{onShiftTypeChange(e.target.value as 'Day'|'Night');resetRecallContext();}} className="border rounded-lg px-3 py-2 text-xs"><option value="Day">Day</option><option value="Night">Night</option></select></div><div><label className="text-[10px] uppercase font-black text-slate-500 block">MT Coverage</label><select value={mtState} onChange={e=>onMtStateChange(e.target.value as MTCoverageState)} className="border rounded-lg px-3 py-2 text-xs"><option value="MT_PRESENT">MT Present</option><option value="RN_COVERING_MT">RN Covering MT</option><option value="MT_UNFILLED">MT Unfilled</option></select></div><div><label className="text-[10px] uppercase font-black text-slate-500 block">PCT Support</label><select value={pctState} onChange={e=>onPctStateChange(e.target.value as PCTCoverageState)} className="border rounded-lg px-3 py-2 text-xs"><option value="PCT_PRESENT">PCT Present</option><option value="PCT_NONE">No PCT</option></select></div></div><div className="flex flex-wrap gap-2"><button onClick={()=>generate(false)} className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs font-black flex gap-1"><Play className="w-3.5 h-3.5"/>Generate 3 Options</button><button onClick={()=>generate(true)} className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-xs font-black flex gap-1" title="Semi-Auto is always available. Recall previous assignments and/or manually set rooms first when you want anchors."><Sparkles className="w-3.5 h-3.5"/>Semi-Auto Fill Rest{recalledCount||fixedRoomNumbers.length?` (${recalledCount} continuity / ${fixedRoomNumbers.length} fixed)`:''}</button><button onClick={onSaveBaseline} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-bold flex gap-1"><Save className="w-3.5 h-3.5"/>Save Baseline</button></div></div>
+    <div className="bg-white rounded-xl border p-4 flex flex-wrap justify-between gap-3 items-end"><div className="flex flex-wrap gap-3 items-end"><div><label className="text-[10px] uppercase font-black text-slate-500 block">Next Shift Date</label><input type="date" value={date} onChange={e=>{onDateChange(e.target.value);resetRecallContext();}} className="border rounded-lg px-3 py-2 text-xs"/></div><div><label className="text-[10px] uppercase font-black text-slate-500 block">Shift</label><select value={shiftType} onChange={e=>{onShiftTypeChange(e.target.value as 'Day'|'Night');resetRecallContext();}} className="border rounded-lg px-3 py-2 text-xs"><option value="Day">Day</option><option value="Night">Night</option></select></div><div><label className="text-[10px] uppercase font-black text-slate-500 block">MT Coverage</label><select value={mtState} onChange={e=>onMtStateChange(e.target.value as MTCoverageState)} className="border rounded-lg px-3 py-2 text-xs"><option value="MT_PRESENT">MT Present</option><option value="RN_COVERING_MT">RN Covering MT</option><option value="MT_UNFILLED">MT Unfilled</option></select></div><div><label className="text-[10px] uppercase font-black text-slate-500 block">PCT Support</label><select value={pctState} onChange={e=>onPctStateChange(e.target.value as PCTCoverageState)} className="border rounded-lg px-3 py-2 text-xs"><option value="PCT_PRESENT">PCT Present</option><option value="PCT_NONE">No PCT</option></select></div></div><div className="flex flex-wrap gap-2"><button onClick={()=>generate(false)} className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs font-black flex gap-1"><Play className="w-3.5 h-3.5"/>Generate 3 Options</button><button onClick={()=>generate(true)} className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-xs font-black flex gap-1" title="Semi-Auto is always available. Recall previous same-shift assignments and/or manually set rooms first when you want anchors."><Sparkles className="w-3.5 h-3.5"/>Semi-Auto Fill Rest{recalledCount||fixedRoomNumbers.length?` (${recalledCount} continuity / ${fixedRoomNumbers.length} fixed)`:''}</button><button onClick={onSaveBaseline} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-bold flex gap-1"><Save className="w-3.5 h-3.5"/>Save Baseline</button></div></div>
 
     {recallMessage&&<div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-xs text-emerald-900">{recallMessage}</div>}
-    {(recalledCount>0||fixedRoomNumbers.length>0)&&<div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 text-xs text-indigo-900"><b>Semi-Auto ready:</b> recalled patients are continuity anchors; those nurses may still receive another appropriate patient. Any room you directly assign on the board is a CN-fixed load.</div>}
+    {(recalledCount>0||fixedRoomNumbers.length>0)&&<div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 text-xs text-indigo-900"><b>Semi-Auto ready:</b> recalled patients are same-shift continuity anchors; those nurses may still receive another appropriate patient. Any room you directly assign on the board is a CN-fixed load.</div>}
     <RecommendationOptions options={recommendationOptions} rosterNames={rosterNames} onApply={applyOption}/>
     {unassigned.length>0&&<div className="bg-rose-50 border border-rose-300 text-rose-900 rounded-xl p-3 flex gap-2"><AlertTriangle className="w-4 h-4 mt-0.5"/><div><b className="text-sm">Recommendation needs CN review for {unassigned.join(', ')}.</b></div></div>}
     <FloorPlanCurrentStaffing currentShift={pseudoShift} onRoomChange={updateRoom} onAssignRoom={assignRoom} onStaffStatusChange={updateStatus} onRecallPrevious={recallPreviousAssignments}/>
