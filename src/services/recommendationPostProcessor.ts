@@ -1,15 +1,12 @@
 import { NurseStaff, PatientRoom, RecommendationResult } from '../types';
 import { evaluateGeographicCluster } from '../config/geography';
 
-// These ICU pairs are operationally poor because the nurse must cover opposite ends/zones.
 const UNSAFE_ICU_PAIRS: [string, string][] = [
   ['103', '113'],
   ['104', '114'],
   ['122', '114'],
 ];
 
-// When two ICU patients must be paired, these are specifically preferred because they are close.
-// This does NOT mean the engine should pair ICU patients when spreading them is feasible.
 const PREFERRED_ICU_PAIRS: [string, string][] = [
   ['103', '104'],
   ['113', '114'],
@@ -45,7 +42,7 @@ const syncNurseDetails = (result: RecommendationResult, rooms: PatientRoom[]) =>
   });
 };
 
-function repairFourRoomIcuCrossPair(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[], locked: Set<string>) {
+function repairFourRoomIcuCrossPair(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[], lockedRooms: Set<string>) {
   const quartet = ['103', '104', '113', '114'];
   const allIcu = quartet.every(num => rooms.some(r => r.roomNumber === num && r.isOccupied && r.acuity === 'ICU'));
   if (!allIcu) return;
@@ -56,9 +53,7 @@ function repairFourRoomIcuCrossPair(result: RecommendationResult, staff: NurseSt
   const nurse114 = result.assignments['114'];
   const crossPaired = nurse103 && nurse104 && nurse103 === nurse113 && nurse104 === nurse114 && nurse103 !== nurse104;
   if (!crossPaired) return;
-
-  // Never rewrite a room the Charge Nurse explicitly fixed in Semi-Auto mode.
-  if (quartet.some(r => locked.has(r))) return;
+  if (quartet.some(r => lockedRooms.has(r))) return;
 
   const a = staff.find(n => n.id === nurse103);
   const b = staff.find(n => n.id === nurse104);
@@ -71,11 +66,11 @@ function repairFourRoomIcuCrossPair(result: RecommendationResult, staff: NurseSt
   syncNurseDetails(result, rooms);
   result.warnings.push({
     type: 'GEOGRAPHY', severity: 'INFO',
-    message: `ICU proximity correction applied: paired 103+104 and 113+114 instead of cross-pairing 103+113 and 104+114. When ICU pairing is necessary, the engine prefers the closest feasible ICU rooms.`,
+    message: 'ICU proximity correction applied: paired 103+104 and 113+114 instead of cross-pairing 103+113 and 104+114. When ICU pairing is necessary, the engine prefers the closest feasible ICU rooms.',
   });
 }
 
-function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[], locked: Set<string>): RecommendationResult {
+function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[], lockedRooms: Set<string>, lockedNurses: Set<string>): RecommendationResult {
   const next: RecommendationResult = {
     ...result,
     assignments: { ...result.assignments },
@@ -83,7 +78,7 @@ function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[],
     warnings: [...result.warnings],
   };
 
-  repairFourRoomIcuCrossPair(next, staff, rooms, locked);
+  repairFourRoomIcuCrossPair(next, staff, rooms, lockedRooms);
 
   for (const [a, b] of UNSAFE_ICU_PAIRS) {
     const roomA = rooms.find(r => r.roomNumber === a && r.isOccupied && r.acuity === 'ICU');
@@ -93,11 +88,11 @@ function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[],
     if (!nurseId || next.assignments[b] !== nurseId) continue;
 
     const currentNurse = staff.find(n => n.id === nurseId);
-    const moveChoices = [roomB, roomA].filter(r => !locked.has(r.roomNumber));
+    const moveChoices = [roomB, roomA].filter(r => !lockedRooms.has(r.roomNumber));
     let best: { room: PatientRoom; nurse: NurseStaff; score: number } | null = null;
 
     for (const movingRoom of moveChoices) {
-      for (const nurse of staff.filter(isActiveBedside).filter(isCriticalCareCapable).filter(n => n.id !== nurseId)) {
+      for (const nurse of staff.filter(isActiveBedside).filter(isCriticalCareCapable).filter(n => n.id !== nurseId && !lockedNurses.has(n.id))) {
         const existing = assignedRoomsFor(next, nurse.id, rooms);
         if (!canSafelyTakeMovedIcu(existing)) continue;
         const proposedNumbers = [...existing.map(r => r.roomNumber), movingRoom.roomNumber];
@@ -119,7 +114,7 @@ function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[],
     } else {
       next.warnings.push({
         type: 'GEOGRAPHY', severity: 'HIGH', roomNumber: a, nurseName: currentNurse?.name,
-        message: locked.has(a) || locked.has(b)
+        message: lockedRooms.has(a) || lockedRooms.has(b)
           ? `Unsafe ICU pairing remains: rooms ${a} and ${b} are both ICU on the same RN and at least one room is CN-fixed in Semi-Auto mode. The engine will not override the Charge Nurse; review before applying.`
           : `Unsafe ICU pairing remains: rooms ${a} and ${b} are both ICU on the same RN. No safer staffed alternative was found; Charge Nurse review is required.`,
       });
@@ -129,7 +124,7 @@ function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[],
   return next;
 }
 
-function addAdmissionReadyBeds(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[]): RecommendationResult {
+function addAdmissionReadyBeds(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[], lockedNurses: Set<string>): RecommendationResult {
   const next: RecommendationResult = {
     ...result,
     assignments: { ...result.assignments },
@@ -142,7 +137,7 @@ function addAdmissionReadyBeds(result: RecommendationResult, staff: NurseStaff[]
 
   for (const detail of next.nurseDetails) {
     const nurse = staff.find(n => n.id === detail.nurseId);
-    if (!nurse || !isActiveBedside(nurse)) continue;
+    if (!nurse || !isActiveBedside(nurse) || lockedNurses.has(nurse.id)) continue;
     const assigned = detail.assignedRooms.map(num => rooms.find(r => r.roomNumber === num)).filter(Boolean) as PatientRoom[];
     if (assigned.length !== 2 || !assigned.every(r => r.acuity === 'PCU' || r.acuity === 'TELE')) continue;
 
@@ -169,6 +164,11 @@ function addAdmissionReadyBeds(result: RecommendationResult, staff: NurseStaff[]
 }
 
 export function postProcessRecommendation(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[], lockedRoomNumbers: string[] = []): RecommendationResult {
-  const locked = new Set(lockedRoomNumbers);
-  return addAdmissionReadyBeds(repairUnsafeIcuPairs(result, staff, rooms, locked), staff, rooms);
+  const lockedRooms = new Set(lockedRoomNumbers);
+  const lockedNurses = new Set(
+    lockedRoomNumbers
+      .map(roomNumber => result.assignments[roomNumber])
+      .filter((id): id is string => Boolean(id)),
+  );
+  return addAdmissionReadyBeds(repairUnsafeIcuPairs(result, staff, rooms, lockedRooms, lockedNurses), staff, rooms, lockedNurses);
 }
