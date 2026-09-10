@@ -19,7 +19,12 @@ export const RapidRoomTools:React.FC<Props>=({rooms,onRoomChange})=>{
   const apply=(room:PatientRoom)=>{
     if(!tool) return;
     if(tool.kind==='acuity') {
-      if(room.acuity!==tool.value || !room.isOccupied) onRoomChange({...room,isOccupied:true,acuity:tool.value});
+      const active=room.isOccupied && room.acuityConfirmed!==false && room.acuity===tool.value;
+      if(active) {
+        onRoomChange({...room,acuityConfirmed:false});
+      } else {
+        onRoomChange({...room,isOccupied:true,acuity:tool.value,acuityConfirmed:true});
+      }
       return;
     }
     const active=room.flags.includes(tool.value);
@@ -28,10 +33,13 @@ export const RapidRoomTools:React.FC<Props>=({rooms,onRoomChange})=>{
     if(!active&&tool.value==='Possible DC') nextFlags=nextFlags.filter(f=>f!=='Expected DC');
     onRoomChange({...room,flags:nextFlags});
   };
+  const uncoded=occupied.filter(r=>r.acuityConfirmed===false);
+
   return <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-3">
-    <div><div className="font-black text-xs uppercase text-slate-800">Rapid Room Coding</div><div className="text-[9px] text-slate-500 mt-0.5">Pick a tool, then tap rooms in succession. Tap the selected tool again to turn it off. Room Detail remains available for one-patient edits.</div></div>
+    <div><div className="font-black text-xs uppercase text-slate-800">Rapid Room Coding</div><div className="text-[9px] text-slate-500 mt-0.5">Pick a tool, then tap rooms in succession. Checked acuity rooms now toggle OFF to UNCoded without changing census. Pick another acuity to recode them.</div></div>
     <div><div className="text-[9px] font-black uppercase text-slate-500 mb-1">Acuity</div><div className="grid grid-cols-2 gap-1">{acuities.map(a=>{const active=tool?.kind==='acuity'&&tool.value===a;return <button key={a} onClick={()=>toggleTool({kind:'acuity',value:a})} className={`rounded border px-2 py-1.5 text-[10px] font-black ${acuityStyle[a]} ${active?'ring-2 ring-slate-800':''}`}>{a}{active?' ✓':''}</button>})}</div></div>
     <div><div className="text-[9px] font-black uppercase text-slate-500 mb-1">Flow / Clinical Flags</div><div className="grid grid-cols-2 gap-1">{flags.map(f=>{const active=tool?.kind==='flag'&&tool.value===f.value;return <button key={f.value} onClick={()=>toggleTool({kind:'flag',value:f.value})} className={`rounded border px-1.5 py-1.5 text-[9px] font-bold text-left ${active?'bg-slate-800 text-white border-slate-800':'bg-slate-50 text-slate-700 border-slate-200'}`}>{f.label}{active?' ✓':''}</button>})}</div></div>
-    {tool && <div className="border-t pt-2"><div className="text-[9px] font-black text-slate-700 mb-1">{tool.kind==='acuity'?`Set ${tool.value} for:`:`Toggle ${flags.find(f=>f.value===tool.value)?.label} for:`}</div><div className="flex flex-wrap gap-1">{occupied.map(r=>{const active=tool.kind==='acuity'?r.acuity===tool.value:r.flags.includes(tool.value);return <button key={r.roomNumber} onClick={()=>apply(r)} className={`rounded border px-1.5 py-1 text-[9px] font-black ${active?'bg-slate-800 text-white border-slate-800':'bg-white text-slate-700 border-slate-300'}`}>{r.roomNumber}{active?' ✓':''}</button>})}</div><div className="text-[8px] text-slate-500 mt-1">For flags, clicking a checked room removes that flag. For acuity, choose a different acuity and tap the rooms you want to change.</div><button onClick={()=>setTool(null)} className="mt-2 text-[9px] font-bold text-slate-500 underline">Clear rapid tool</button></div>}
+    {tool && <div className="border-t pt-2"><div className="text-[9px] font-black text-slate-700 mb-1">{tool.kind==='acuity'?`Toggle ${tool.value} for:`:`Toggle ${flags.find(f=>f.value===tool.value)?.label} for:`}</div><div className="flex flex-wrap gap-1">{occupied.map(r=>{const active=tool.kind==='acuity'?(r.acuityConfirmed!==false&&r.acuity===tool.value):r.flags.includes(tool.value);return <button key={r.roomNumber} onClick={()=>apply(r)} className={`rounded border px-1.5 py-1 text-[9px] font-black ${active?'bg-slate-800 text-white border-slate-800':'bg-white text-slate-700 border-slate-300'}`}>{r.roomNumber}{active?' ✓':''}</button>})}</div><div className="text-[8px] text-slate-500 mt-1">Click a checked acuity room to remove that acuity code. The patient stays in census and is marked UNCoded until you assign a new acuity.</div><button onClick={()=>setTool(null)} className="mt-2 text-[9px] font-bold text-slate-500 underline">Clear rapid tool</button></div>}
+    {uncoded.length>0&&<div className="bg-amber-50 border border-amber-300 rounded-lg p-2"><div className="text-[9px] font-black text-amber-900">NEEDS ACUITY ({uncoded.length})</div><div className="flex flex-wrap gap-1 mt-1">{uncoded.map(r=><span key={r.roomNumber} className="rounded border border-amber-300 bg-white px-1.5 py-1 text-[9px] font-black text-amber-900">{r.roomNumber}</span>)}</div></div>}
   </div>;
 };
