@@ -15,18 +15,23 @@ const acuityStyle:Record<AcuityLevel,string>={CVICU:'bg-rose-100 border-rose-300
 export const RapidRoomTools:React.FC<Props>=({rooms,onRoomChange})=>{
   const [tool,setTool]=useState<Tool>(null);
   const occupied=rooms.filter(r=>r.isOccupied);
+  const toggleTool=(next:Exclude<Tool,null>)=>setTool(current=>current?.kind===next.kind&&current.value===next.value?null:next);
   const apply=(room:PatientRoom)=>{
     if(!tool) return;
-    if(tool.kind==='acuity') onRoomChange({...room,isOccupied:true,acuity:tool.value});
-    else {
-      const active=room.flags.includes(tool.value);
-      onRoomChange({...room,flags:active?room.flags.filter(f=>f!==tool.value):[...room.flags,tool.value]});
+    if(tool.kind==='acuity') {
+      if(room.acuity!==tool.value || !room.isOccupied) onRoomChange({...room,isOccupied:true,acuity:tool.value});
+      return;
     }
+    const active=room.flags.includes(tool.value);
+    let nextFlags=active?room.flags.filter(f=>f!==tool.value):[...room.flags,tool.value];
+    if(!active&&tool.value==='Expected DC') nextFlags=nextFlags.filter(f=>f!=='Possible DC');
+    if(!active&&tool.value==='Possible DC') nextFlags=nextFlags.filter(f=>f!=='Expected DC');
+    onRoomChange({...room,flags:nextFlags});
   };
   return <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-3">
-    <div><div className="font-black text-xs uppercase text-slate-800">Rapid Room Coding</div><div className="text-[9px] text-slate-500 mt-0.5">Choose a category, then tap rooms in succession. Tap again to toggle a flag.</div></div>
-    <div><div className="text-[9px] font-black uppercase text-slate-500 mb-1">Acuity</div><div className="grid grid-cols-2 gap-1">{acuities.map(a=><button key={a} onClick={()=>setTool({kind:'acuity',value:a})} className={`rounded border px-2 py-1.5 text-[10px] font-black ${acuityStyle[a]} ${tool?.kind==='acuity'&&tool.value===a?'ring-2 ring-slate-800':''}`}>{a}</button>)}</div></div>
-    <div><div className="text-[9px] font-black uppercase text-slate-500 mb-1">Flow / Clinical Flags</div><div className="grid grid-cols-2 gap-1">{flags.map(f=><button key={f.value} onClick={()=>setTool({kind:'flag',value:f.value})} className={`rounded border px-1.5 py-1.5 text-[9px] font-bold text-left ${tool?.kind==='flag'&&tool.value===f.value?'bg-slate-800 text-white border-slate-800':'bg-slate-50 text-slate-700 border-slate-200'}`}>{f.label}</button>)}</div></div>
-    {tool && <div className="border-t pt-2"><div className="text-[9px] font-black text-slate-700 mb-1">{tool.kind==='acuity'?`Set ${tool.value}:`:`Toggle ${flags.find(f=>f.value===tool.value)?.label}:`}</div><div className="flex flex-wrap gap-1">{occupied.map(r=>{const active=tool.kind==='acuity'?r.acuity===tool.value:r.flags.includes(tool.value);return <button key={r.roomNumber} onClick={()=>apply(r)} className={`rounded border px-1.5 py-1 text-[9px] font-black ${active?'bg-slate-800 text-white border-slate-800':'bg-white text-slate-700 border-slate-300'}`}>{r.roomNumber}{active?' ✓':''}</button>})}</div><button onClick={()=>setTool(null)} className="mt-2 text-[9px] font-bold text-slate-500 underline">Clear rapid tool</button></div>}
+    <div><div className="font-black text-xs uppercase text-slate-800">Rapid Room Coding</div><div className="text-[9px] text-slate-500 mt-0.5">Pick a tool, then tap rooms in succession. Tap the selected tool again to turn it off. Room Detail remains available for one-patient edits.</div></div>
+    <div><div className="text-[9px] font-black uppercase text-slate-500 mb-1">Acuity</div><div className="grid grid-cols-2 gap-1">{acuities.map(a=>{const active=tool?.kind==='acuity'&&tool.value===a;return <button key={a} onClick={()=>toggleTool({kind:'acuity',value:a})} className={`rounded border px-2 py-1.5 text-[10px] font-black ${acuityStyle[a]} ${active?'ring-2 ring-slate-800':''}`}>{a}{active?' ✓':''}</button>})}</div></div>
+    <div><div className="text-[9px] font-black uppercase text-slate-500 mb-1">Flow / Clinical Flags</div><div className="grid grid-cols-2 gap-1">{flags.map(f=>{const active=tool?.kind==='flag'&&tool.value===f.value;return <button key={f.value} onClick={()=>toggleTool({kind:'flag',value:f.value})} className={`rounded border px-1.5 py-1.5 text-[9px] font-bold text-left ${active?'bg-slate-800 text-white border-slate-800':'bg-slate-50 text-slate-700 border-slate-200'}`}>{f.label}{active?' ✓':''}</button>})}</div></div>
+    {tool && <div className="border-t pt-2"><div className="text-[9px] font-black text-slate-700 mb-1">{tool.kind==='acuity'?`Set ${tool.value} for:`:`Toggle ${flags.find(f=>f.value===tool.value)?.label} for:`}</div><div className="flex flex-wrap gap-1">{occupied.map(r=>{const active=tool.kind==='acuity'?r.acuity===tool.value:r.flags.includes(tool.value);return <button key={r.roomNumber} onClick={()=>apply(r)} className={`rounded border px-1.5 py-1 text-[9px] font-black ${active?'bg-slate-800 text-white border-slate-800':'bg-white text-slate-700 border-slate-300'}`}>{r.roomNumber}{active?' ✓':''}</button>})}</div><div className="text-[8px] text-slate-500 mt-1">For flags, clicking a checked room removes that flag. For acuity, choose a different acuity and tap the rooms you want to change.</div><button onClick={()=>setTool(null)} className="mt-2 text-[9px] font-bold text-slate-500 underline">Clear rapid tool</button></div>}
   </div>;
 };
