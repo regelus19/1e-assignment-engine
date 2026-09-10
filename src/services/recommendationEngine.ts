@@ -29,6 +29,8 @@ const createsPreferred122LowerAcuityPair = (assigned: PatientRoom[], room: Patie
   return candidateRooms.some(r => ['113', '120', '121'].includes(r.roomNumber) && ['PCU', 'TELE'].includes(r.acuity));
 };
 
+const expectedDischargeCount = (rooms: PatientRoom[]) => rooms.filter(r => r.flags.includes('Expected DC')).length;
+
 const workloadBlockReason = (n: NurseStaff, assigned: PatientRoom[], room: PatientRoom, allowTeleQuad: boolean): string | null => {
   const cvicu = assigned.filter(x => x.acuity === 'CVICU').length;
   const icu = assigned.filter(x => x.acuity === 'ICU').length;
@@ -127,6 +129,20 @@ export function runRecommendationEngine(
         candidateReasons.push(geo.reason);
       } else candidate += 20;
 
+      if (room.flags.includes('Expected DC')) {
+        const existingExpectedDC = expectedDischargeCount(assigned);
+        if (existingExpectedDC === 0) {
+          candidate += 24;
+          candidateReasons.push('✓ spreads expected discharges across nurses');
+        } else if (existingExpectedDC === 1) {
+          candidate -= 55;
+          candidateReasons.push('⚠ avoids giving one nurse 2 expected discharges when alternatives exist');
+        } else {
+          candidate -= 120;
+          candidateReasons.push('⚠ strongly avoids concentrating 3+ expected discharges on one nurse');
+        }
+      }
+
       if (createsNonIdeal103IcuPair(assigned, room)) {
         candidate -= 100;
         candidateReasons.push('⚠ avoids pairing Room 103 ICU with another Hall A ICU unless necessary');
@@ -175,6 +191,14 @@ export function runRecommendationEngine(
     const nums = st.assignedRooms.map(r => r.roomNumber);
     const geo = evaluateGeographicCluster(nums);
     if (geo.advisory) warnings.push({ type: 'GEOGRAPHY', severity: 'MEDIUM', nurseName: st.nurse.name, message: `${st.nurse.name}'s assignment (${nums.join(', ')}) spans separated zones: ${geo.reason}.` });
+
+    const dcRooms = st.assignedRooms.filter(r => r.flags.includes('Expected DC')).map(r => r.roomNumber);
+    if (dcRooms.length >= 3) {
+      warnings.push({ type: 'WORKLOAD_RATIO', severity: 'MEDIUM', nurseName: st.nurse.name, message: `Discharge concentration: ${st.nurse.name} has ${dcRooms.length} expected discharges (${dcRooms.join(', ')}). This may create repeated admission turnover later in the shift; spread these discharges when staffing/geography allow, unless intentionally set by the Charge Nurse.` });
+    } else if (dcRooms.length === 2) {
+      warnings.push({ type: 'WORKLOAD_RATIO', severity: 'INFO', nurseName: st.nurse.name, message: `Discharge concentration advisory: ${st.nurse.name} has 2 expected discharges (${dcRooms.join(', ')}). Consider spreading expected discharges to reduce the likelihood that one nurse receives multiple replacement admissions.` });
+    }
+
     if (st.assignedRooms.some(r => r.roomNumber === '103' && r.acuity === 'ICU') && st.assignedRooms.some(r => r.roomNumber !== '103' && r.acuity === 'ICU' && ROOM_METADATA_MAP[r.roomNumber]?.hall === 'A')) {
       const pairedHallARooms = st.assignedRooms.filter(r => r.roomNumber !== '103' && r.acuity === 'ICU' && ROOM_METADATA_MAP[r.roomNumber]?.hall === 'A').map(r => r.roomNumber);
       warnings.push({ type: 'GEOGRAPHY', severity: 'MEDIUM', nurseName: st.nurse.name, roomNumber: '103', message: `Non-ideal ICU pairing: Room 103 ICU is paired with Hall A ICU room ${pairedHallARooms.join(', ')} for ${st.nurse.name}. Prefer splitting this pair when skill mix allows.` });
