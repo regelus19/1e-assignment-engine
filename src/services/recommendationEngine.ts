@@ -22,6 +22,13 @@ const createsNonIdeal122114IcuPair = (assigned: PatientRoom[], room: PatientRoom
   return candidateRooms.some(r => r.roomNumber === '122' && r.acuity === 'ICU') && candidateRooms.some(r => r.roomNumber === '114' && r.acuity === 'ICU');
 };
 
+const createsPreferred122LowerAcuityPair = (assigned: PatientRoom[], room: PatientRoom): boolean => {
+  const candidateRooms = [...assigned, room];
+  const has122Icu = candidateRooms.some(r => r.roomNumber === '122' && r.acuity === 'ICU');
+  if (!has122Icu) return false;
+  return candidateRooms.some(r => ['113', '120', '121'].includes(r.roomNumber) && ['PCU', 'TELE'].includes(r.acuity));
+};
+
 const workloadBlockReason = (n: NurseStaff, assigned: PatientRoom[], room: PatientRoom, allowTeleQuad: boolean): string | null => {
   const cvicu = assigned.filter(x => x.acuity === 'CVICU').length;
   const icu = assigned.filter(x => x.acuity === 'ICU').length;
@@ -125,8 +132,12 @@ export function runRecommendationEngine(
         candidateReasons.push('⚠ avoids pairing Room 103 ICU with another Hall A ICU unless necessary');
       }
       if (createsNonIdeal122114IcuPair(assigned, room)) {
-        candidate -= 100;
-        candidateReasons.push('⚠ avoids pairing Room 122 ICU with Room 114 ICU unless necessary');
+        candidate -= 130;
+        candidateReasons.push('⚠ strongly avoids pairing Room 122 ICU with Room 114 ICU unless operationally necessary');
+      }
+      if (createsPreferred122LowerAcuityPair(assigned, room)) {
+        candidate += 35;
+        candidateReasons.push('✓ prefers Room 122 ICU with nearby PCU/TELE in 113, 120, or 121 when staffing permits');
       }
 
       if (strategy === 'BALANCED') {
