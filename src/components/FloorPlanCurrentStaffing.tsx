@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { Activity, AlertTriangle, Ban, Brain, CircleDot, Droplets, HeartPulse, LogIn, LogOut, MoveRight, ShieldAlert, Users, Wind, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Brain, CircleDot, Droplets, HeartPulse, LogIn, LogOut, MoveRight, RotateCcw, ShieldAlert, Users, Wind, X } from 'lucide-react';
 import floorPlanImage from '../assets/1e-floorplan.png';
 import { AcuityLevel, ComplexityFlag, CurrentShiftState, NurseStaff, PatientRoom, StaffStatus } from '../types';
 import { RapidRoomTools } from './RapidRoomTools';
 
-interface Props { currentShift: CurrentShiftState; onRoomChange: (room: PatientRoom) => void; onAssignRoom: (roomNumber: string, nurseId: string | null) => void; onStaffStatusChange: (staff: NurseStaff, status: StaffStatus) => void; }
+interface Props { currentShift: CurrentShiftState; onRoomChange: (room: PatientRoom) => void; onAssignRoom: (roomNumber: string, nurseId: string | null) => void; onStaffStatusChange: (staff: NurseStaff, status: StaffStatus) => void; onRecallPrevious: () => void; }
 type RoomPosition = { left: number; top: number };
 
 const ROOM_POSITIONS: Record<string, RoomPosition> = {
@@ -38,7 +38,7 @@ const pairLabel = (staff: NurseStaff, roster: NurseStaff[]) => {
   return partner ? `${firstName(staff.name)} / ${firstName(partner.name)}` : firstName(staff.name);
 };
 
-export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoomChange, onAssignRoom }) => {
+export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoomChange, onAssignRoom, onRecallPrevious }) => {
   const occupied = currentShift.rooms.filter(r => r.isOccupied);
   const unassigned = occupied.filter(r => !r.assignedNurseId);
   const [selectedRoomNumber, setSelectedRoomNumber] = useState(occupied[0]?.roomNumber || '101');
@@ -74,9 +74,12 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
       <RapidRoomTools rooms={currentShift.rooms} onRoomChange={onRoomChange} />
 
       <div className="bg-white border-2 border-slate-300 rounded-xl overflow-hidden">
-        <div className="px-3 py-2 bg-slate-900 text-white flex items-center justify-between gap-2">
-          <div><div className="text-xs font-black uppercase">Live Assignment Board</div><div className="text-[9px] text-slate-300">Select RN → tap rooms repeatedly. × removes one room.</div></div>
-          <button type="button" onClick={clearAll} className="text-[9px] font-bold border border-slate-600 rounded px-2 py-1 hover:bg-slate-800">Clear All</button>
+        <div className="px-3 py-2 bg-slate-900 text-white">
+          <div className="flex items-center justify-between gap-2">
+            <div><div className="text-xs font-black uppercase">Live Assignment Board</div><div className="text-[9px] text-slate-300">Recall prior continuity, adjust manually, then Semi-Auto fill the rest.</div></div>
+            <button type="button" onClick={clearAll} className="text-[9px] font-bold border border-slate-600 rounded px-2 py-1 hover:bg-slate-800">Clear All</button>
+          </div>
+          <button type="button" onClick={onRecallPrevious} className="mt-2 w-full flex items-center justify-center gap-1.5 text-[9px] font-black border border-indigo-300 bg-indigo-500/20 text-indigo-100 rounded px-2 py-1.5 hover:bg-indigo-500/30" title="Restore matching previous patient-to-nurse assignments without overwriting any rooms you already assigned manually"><RotateCcw className="w-3 h-3"/>Recall Previous Assignments</button>
         </div>
         <div className="divide-y divide-slate-100">{bedside.map(staff => {
           const rs = roomsFor(staff.id), selected = manualStaffId === staff.id, canAssign = ['ACTIVE', 'RECALLED'].includes(staff.staffStatus);
