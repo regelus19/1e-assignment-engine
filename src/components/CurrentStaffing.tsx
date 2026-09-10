@@ -29,10 +29,16 @@ export const CurrentStaffing:React.FC<Props>=({currentShift,onCurrentShiftChange
  const recommend=(strategy:'BALANCED'|'CONSERVE_SKILL_MIX'|'CAPACITY_EXCEPTION',charge:boolean,quad:boolean)=>postProcessRecommendation(runRecommendationEngine(currentShift.roster,currentShift.rooms,charge,quad,strategy),currentShift.roster,currentShift.rooms);
 
  const generate=()=>{
+   const balanced=recommend('BALANCED',false,false);
+   const conserve=recommend('CONSERVE_SKILL_MIX',false,false);
+   // Capacity exceptions are rescue tools, not a different way to compress a safely staffed unit.
+   // If normal limits can assign everyone, Option 3 stays within normal limits too.
+   const capacityNormal=recommend('CAPACITY_EXCEPTION',false,false);
+   const capacity=capacityNormal.unassignedRooms.length===0?capacityNormal:recommend('CAPACITY_EXCEPTION',true,true);
    const options:RecommendationOption[]=[
-     {id:'BALANCED',title:'Balanced / Spread ICU',subtitle:'Spreads ICU workload when skill mix allows and then pairs ICU with lower-acuity patients when appropriate.',result:recommend('BALANCED',false,false)},
-     {id:'CONSERVE_SKILL_MIX',title:'Preserve Critical-Care Skill Mix',subtitle:'More willing to pair two ICU patients on one qualified RN so another ICU/CVICU-capable RN remains available.',result:recommend('CONSERVE_SKILL_MIX',false,false)},
-     {id:'CAPACITY_EXCEPTION',title:'Capacity Exception',subtitle:'Uses normal limits first, but can consider one TELE patient for Charge and a TELE quad when needed. CN approval remains required.',result:recommend('CAPACITY_EXCEPTION',true,true)},
+     {id:'BALANCED',title:'Balanced / Spread ICU',subtitle:'Spreads ICU workload when skill mix allows and then pairs ICU with lower-acuity patients when appropriate.',result:balanced},
+     {id:'CONSERVE_SKILL_MIX',title:'Preserve Critical-Care Skill Mix',subtitle:'More willing to pair two ICU patients on one qualified RN so another ICU/CVICU-capable RN remains available.',result:conserve},
+     {id:'CAPACITY_EXCEPTION',title:'Capacity Exception',subtitle:capacityNormal.unassignedRooms.length===0?'Normal staffing covers current census, so no Charge-patient or TELE-quad exception is used.':'Normal staffing leaves uncovered demand; this option may use one TELE patient for Charge and/or a TELE quad. CN approval remains required.',result:capacity},
    ];
    setRecommendationOptions(options);
    setFitLabel('3 OPTIONS');
