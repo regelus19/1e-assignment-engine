@@ -19,6 +19,7 @@ const OPERATIONAL_EVENTS_KEY = '1E_OPERATIONAL_EVENTS';
 const PLAN_BASELINE_KEY = '1E_PLAN_BASELINE';
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+const normalizeName = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
 
 export const INITIAL_STAFF: NurseStaff[] = [
   { id: 'n1', name: 'Sarah Jenkins', role: 'CHG', assignedPhone: '44-3801', capability: 'CVICU', staffStatus: 'ACTIVE' },
@@ -177,10 +178,19 @@ export const StorageService = {
     for (let i = 0; i < Math.min(history.length, 6); i += 1) {
       const snap = history[i];
       const match = snap.rooms.find(r => r.patientStayId === patientStayId && r.assignedNurseId);
-      if (match?.assignedNurseId) {
-        const activeStaff = currentRoster.find(s => s.id === match.assignedNurseId && (s.staffStatus === 'ACTIVE' || s.staffStatus === 'RECALLED'));
-        if (activeStaff) return { nurseId: activeStaff.id, nurseName: activeStaff.name, daysAgo: i + 1 };
+      if (!match?.assignedNurseId) continue;
+
+      // Prefer stable staff IDs, but fall back to the finalized nurse's normalized name.
+      // This keeps continuity working when a nurse was re-created in the roster and received a new local ID.
+      let activeStaff = currentRoster.find(s => s.id === match.assignedNurseId && (s.staffStatus === 'ACTIVE' || s.staffStatus === 'RECALLED'));
+      if (!activeStaff) {
+        const priorNurse = snap.roster.find(s => s.id === match.assignedNurseId);
+        if (priorNurse) {
+          const priorName = normalizeName(priorNurse.name);
+          activeStaff = currentRoster.find(s => normalizeName(s.name) === priorName && (s.staffStatus === 'ACTIVE' || s.staffStatus === 'RECALLED'));
+        }
       }
+      if (activeStaff) return { nurseId: activeStaff.id, nurseName: activeStaff.name, daysAgo: i + 1 };
     }
     return null;
   },
