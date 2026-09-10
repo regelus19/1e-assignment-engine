@@ -1,119 +1,12 @@
 import React from 'react';
-import { NurseStaff, PatientRoom, OnCallProviders } from '../types';
-
-interface PrintSheetProps {
-  date: string;
-  shiftType: string;
-  roster: NurseStaff[];
-  rooms: PatientRoom[];
-  onCall: OnCallProviders;
-}
-
-export const PrintSheet: React.FC<PrintSheetProps> = ({
-  date,
-  shiftType,
-  roster,
-  rooms,
-  onCall
-}) => {
-  const getFirstName = (fullName: string) => fullName.trim().split(' ')[0] || fullName;
-
-  const getStaffAssignmentString = (staff: NurseStaff): string => {
-    if (staff.staffStatus === 'FLEXED') {
-      return staff.plannedReturnTime ? `FLEXED – RETURN ${staff.plannedReturnTime}` : 'FLEXED';
-    }
-    if (staff.staffStatus === 'ON_CALL') {
-      return 'ON CALL';
-    }
-    if (staff.role === 'MT') {
-      return 'MT';
-    }
-    if (staff.role === 'PCT') {
-      return 'PCT';
-    }
-
-    const assignedRooms = rooms
-      .filter(r => r.assignedNurseId === staff.id)
-      .map(r => r.roomNumber)
-      .sort();
-
-    if (staff.role === 'CHG') {
-      return assignedRooms.length > 0 ? `CHG, ${assignedRooms.join(', ')}` : 'CHG';
-    }
-
-    if (staff.coveringMT) {
-      return assignedRooms.length > 0 
-        ? `${assignedRooms.join(', ')} (Covering MT)`
-        : 'MT Coverage Only';
-    }
-
-    return assignedRooms.length > 0 ? assignedRooms.join(', ') : 'Unassigned';
-  };
-
-  return (
-    <div className="bg-white text-black p-6 font-sans max-w-4xl mx-auto">
-      {/* Header */}
-      <div className="border-b-2 border-black pb-2 mb-4 flex justify-between items-end">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight">1 EAST STAFFING ASSIGNMENTS</h1>
-          <p className="text-sm font-semibold text-neutral-700">Cardiac Universal Bed (CUB) Unit</p>
-        </div>
-        <div className="text-right">
-          <p className="text-base font-bold">{date}</p>
-          <p className="text-sm font-semibold uppercase">{shiftType} Shift</p>
-        </div>
-      </div>
-
-      {/* Staff Assignments Table */}
-      <div className="mb-6">
-        <table className="w-full border-collapse border border-black text-sm">
-          <thead>
-            <tr className="bg-neutral-100 border-b border-black">
-              <th className="border-r border-black p-2 text-left font-black w-1/4">Staff Name</th>
-              <th className="border-r border-black p-2 text-left font-black w-1/2">Role / Assigned Rooms / Status</th>
-              <th className="p-2 text-left font-black w-1/4">Assigned Phone</th>
-            </tr>
-          </thead>
-          <tbody>
-            {roster.map((staff) => (
-              <tr key={staff.id} className="border-b border-black">
-                <td className="border-r border-black p-2 font-bold">{getFirstName(staff.name)}</td>
-                <td className="border-r border-black p-2">{getStaffAssignmentString(staff)}</td>
-                <td className="p-2 font-mono">{staff.assignedPhone || '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* On-Call Provider Reference Block */}
-      <div className="border border-black p-3">
-        <h2 className="text-xs font-black uppercase tracking-wider mb-2 border-b border-black pb-1">
-          On-Call Provider Reference
-        </h2>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-          <div className="flex justify-between border-b border-neutral-200 pb-0.5">
-            <span className="font-bold">INTENSIVIST:</span>
-            <span>{onCall.intensivist || '-'}</span>
-          </div>
-          <div className="flex justify-between border-b border-neutral-200 pb-0.5">
-            <span className="font-bold">CARDIOTHORACIC:</span>
-            <span>{onCall.cardiothoracic || '-'}</span>
-          </div>
-          <div className="flex justify-between border-b border-neutral-200 pb-0.5">
-            <span className="font-bold">ACUTE MI:</span>
-            <span>{onCall.acuteMI || '-'}</span>
-          </div>
-          <div className="flex justify-between border-b border-neutral-200 pb-0.5">
-            <span className="font-bold">CARDIOLOGY:</span>
-            <span>{onCall.cardiology || '-'}</span>
-          </div>
-          <div className="flex justify-between border-b border-neutral-200 pb-0.5">
-            <span className="font-bold">HOSPITALIST:</span>
-            <span>{onCall.hospitalist || '-'}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+import { FinalizedShiftSnapshot, NurseStaff, PatientRoom, OnCallProviders } from '../types';
+interface PrintSheetProps { date:string; shiftType:string; roster:NurseStaff[]; rooms:PatientRoom[]; onCall:OnCallProviders; previousShift?:FinalizedShiftSnapshot|null; }
+const first=(n:string)=>n.trim().split(/\s+/)[0]||n;
+const pairName=(s:NurseStaff,roster:NurseStaff[])=>{if(s.role!=='Preceptor'||!s.orientationPartnerId)return first(s.name);const p=roster.find(x=>x.id===s.orientationPartnerId);return p?`${first(s.name)} / ${first(p.name)}`:first(s.name);};
+const rows=(roster:NurseStaff[],rooms:PatientRoom[])=>roster.filter(s=>s.role!=='Orientee').map(s=>{const assigned=rooms.filter(r=>r.assignedNurseId===s.id).map(r=>r.roomNumber).sort();let assignment=s.role==='CHG'?(assigned.length?`CHG, ${assigned.join(', ')}`:'CHG'):s.role==='MT'?'MT':s.role==='PCT'?'PCT':s.staffStatus==='FLEXED'?'FLEXED':s.staffStatus==='ON_CALL'?'ON CALL':assigned.length?assigned.join(', '):'—';return {id:s.id,name:pairName(s,roster),assignment,phone:s.assignedPhone||'-'};});
+export const PrintSheet:React.FC<PrintSheetProps>=({date,shiftType,roster,rooms,onCall,previousShift})=>{const current=rows(roster,rooms),previous=previousShift?rows(previousShift.roster,previousShift.rooms):[];const max=Math.max(current.length,previous.length,1);return <div className="bg-white text-black p-4 font-sans max-w-5xl mx-auto print:p-0">
+ <div className="border-b-2 border-black pb-1 mb-2 flex justify-between items-end"><div><h1 className="text-xl font-black">1 EAST STAFFING ASSIGNMENTS</h1><p className="text-xs font-semibold">Cardiac Universal Bed (CUB) Unit • Shift Handoff Reference</p></div><div className="text-right text-sm font-bold">{date}<div>{shiftType} Shift</div></div></div>
+ <table className="w-full border-collapse border border-black text-[11px]"><thead><tr><th colSpan={3} className="border border-black p-1 bg-neutral-200 text-left">PREVIOUS SHIFT / HANDOFF FROM</th><th colSpan={3} className="border border-black p-1 bg-neutral-200 text-left">CURRENT SHIFT / HANDOFF TO</th></tr><tr><th className="border border-black p-1 text-left">Staff</th><th className="border border-black p-1 text-left">Assignment</th><th className="border border-black p-1 text-left">Phone</th><th className="border border-black p-1 text-left">Staff</th><th className="border border-black p-1 text-left">Assignment</th><th className="border border-black p-1 text-left">Phone</th></tr></thead><tbody>{Array.from({length:max}).map((_,i)=>{const p=previous[i],c=current[i];return <tr key={i}><td className="border border-black p-1 font-bold">{p?.name||''}</td><td className="border border-black p-1">{p?.assignment||''}</td><td className="border border-black p-1">{p?.phone||''}</td><td className="border border-black p-1 font-bold">{c?.name||''}</td><td className="border border-black p-1">{c?.assignment||''}</td><td className="border border-black p-1">{c?.phone||''}</td></tr>})}</tbody></table>
+ <div className="border border-black border-t-0 p-2 text-[10px]"><div className="font-black mb-1">ON-CALL PROVIDERS</div><div className="grid grid-cols-5 gap-2"><div><b>INTENSIVIST</b><br/>{onCall.intensivist||'-'}</div><div><b>CARDIOTHORACIC</b><br/>{onCall.cardiothoracic||'-'}</div><div><b>ACUTE MI</b><br/>{onCall.acuteMI||'-'}</div><div><b>CARDIOLOGY</b><br/>{onCall.cardiology||'-'}</div><div><b>HOSPITALIST</b><br/>{onCall.hospitalist||'-'}</div></div></div>
+ </div>;
 };
