@@ -1,10 +1,18 @@
 import { NurseStaff, PatientRoom, RecommendationResult } from '../types';
 import { evaluateGeographicCluster } from '../config/geography';
 
+// These ICU pairs are operationally poor because the nurse must cover opposite ends/zones.
 const UNSAFE_ICU_PAIRS: [string, string][] = [
   ['103', '113'],
   ['104', '114'],
   ['122', '114'],
+];
+
+// When two ICU patients must be paired, these are specifically preferred because they are close.
+// This does NOT mean the engine should pair ICU patients when spreading them is feasible.
+const PREFERRED_ICU_PAIRS: [string, string][] = [
+  ['103', '104'],
+  ['113', '114'],
 ];
 
 const isCriticalCareCapable = (n: NurseStaff) => n.capability === 'ICU' || n.capability === 'CVICU';
@@ -16,6 +24,9 @@ const assignedRoomsFor = (result: RecommendationResult, nurseId: string, rooms: 
 const isUnsafePair = (roomNumbers: string[]) =>
   UNSAFE_ICU_PAIRS.some(([a, b]) => roomNumbers.includes(a) && roomNumbers.includes(b));
 
+const isPreferredPair = (roomNumbers: string[]) =>
+  PREFERRED_ICU_PAIRS.some(([a, b]) => roomNumbers.length === 2 && roomNumbers.includes(a) && roomNumbers.includes(b));
+
 const canSafelyTakeMovedIcu = (candidateRooms: PatientRoom[]) => {
   const cvicu = candidateRooms.filter(r => r.acuity === 'CVICU').length;
   const icu = candidateRooms.filter(r => r.acuity === 'ICU').length;
@@ -26,6 +37,44 @@ const canSafelyTakeMovedIcu = (candidateRooms: PatientRoom[]) => {
   return candidateRooms.length <= 1;
 };
 
+const syncNurseDetails = (result: RecommendationResult, rooms: PatientRoom[]) => {
+  result.nurseDetails.forEach(detail => {
+    detail.assignedRooms = rooms
+      .filter(r => r.isOccupied && result.assignments[r.roomNumber] === detail.nurseId)
+      .map(r => r.roomNumber);
+  });
+};
+
+// Special four-room correction seen in real 1E workflow:
+// if 103/104/113/114 are all ICU and the engine cross-pairs 103+113 and 104+114,
+// keep the same two qualified nurses but regroup the patients as 103+104 and 113+114.
+function repairFourRoomIcuCrossPair(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[]) {
+  const quartet = ['103', '104', '113', '114'];
+  const allIcu = quartet.every(num => rooms.some(r => r.roomNumber === num && r.isOccupied && r.acuity === 'ICU'));
+  if (!allIcu) return;
+
+  const nurse103 = result.assignments['103'];
+  const nurse104 = result.assignments['104'];
+  const nurse113 = result.assignments['113'];
+  const nurse114 = result.assignments['114'];
+  const crossPaired = nurse103 && nurse104 && nurse103 === nurse113 && nurse104 === nurse114 && nurse103 !== nurse104;
+  if (!crossPaired) return;
+
+  const a = staff.find(n => n.id === nurse103);
+  const b = staff.find(n => n.id === nurse104);
+  if (!a || !b || !isActiveBedside(a) || !isActiveBedside(b) || !isCriticalCareCapable(a) || !isCriticalCareCapable(b)) return;
+
+  result.assignments['103'] = a.id;
+  result.assignments['104'] = a.id;
+  result.assignments['113'] = b.id;
+  result.assignments['114'] = b.id;
+  syncNurseDetails(result, rooms);
+  result.warnings.push({
+    type: 'GEOGRAPHY', severity: 'INFO',
+    message: `ICU proximity correction applied: paired 103+104 and 113+114 instead of cross-pairing 103+113 and 104+114. When ICU pairing is necessary, the engine prefers the closest feasible ICU rooms.`,
+  });
+}
+
 function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[], rooms: PatientRoom[]): RecommendationResult {
   const next: RecommendationResult = {
     ...result,
@@ -33,6 +82,8 @@ function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[],
     nurseDetails: result.nurseDetails.map(n => ({ ...n, assignedRooms: [...n.assignedRooms], reasons: [...n.reasons] })),
     warnings: [...result.warnings],
   };
+
+  repairFourRoomIcuCrossPair(next, staff, rooms);
 
   for (const [a, b] of UNSAFE_ICU_PAIRS) {
     const roomA = rooms.find(r => r.roomNumber === a && r.isOccupied && r.acuity === 'ICU');
@@ -52,17 +103,15 @@ function repairUnsafeIcuPairs(result: RecommendationResult, staff: NurseStaff[],
         const proposedNumbers = [...existing.map(r => r.roomNumber), movingRoom.roomNumber];
         if (isUnsafePair(proposedNumbers)) continue;
         const geo = evaluateGeographicCluster(proposedNumbers);
-        const score = geo.score * 100 + (existing.length === 0 ? 10 : 0);
+        let score = geo.score * 100 + (existing.length === 0 ? 10 : 0);
+        if (isPreferredPair(proposedNumbers)) score += 150;
         if (!best || score > best.score) best = { room: movingRoom, nurse, score };
       }
     }
 
     if (best) {
       next.assignments[best.room.roomNumber] = best.nurse.id;
-      const fromDetail = next.nurseDetails.find(n => n.nurseId === nurseId);
-      const toDetail = next.nurseDetails.find(n => n.nurseId === best!.nurse.id);
-      if (fromDetail) fromDetail.assignedRooms = fromDetail.assignedRooms.filter(r => r !== best!.room.roomNumber);
-      if (toDetail && !toDetail.assignedRooms.includes(best.room.roomNumber)) toDetail.assignedRooms.push(best.room.roomNumber);
+      syncNurseDetails(next, rooms);
       next.warnings.push({
         type: 'GEOGRAPHY', severity: 'INFO', roomNumber: best.room.roomNumber, nurseName: best.nurse.name,
         message: `Safety correction applied: moved ICU room ${best.room.roomNumber} from ${currentNurse?.name || 'the original RN'} to ${best.nurse.name} to avoid unsafe ICU pairing ${a}+${b}.`,
