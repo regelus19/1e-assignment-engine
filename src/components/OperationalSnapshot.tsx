@@ -36,8 +36,8 @@ export const OperationalSnapshot: React.FC<Props> = ({ currentCensus, rooms, cap
       <ReadOnlyMetric label="Staffed Beds" value={staffedBeds} note={`${staffedAvailable} open & staffed`} emphasis="bg-blue-50 border-blue-300 text-blue-900" />
       <Metric label="Incoming Xfers" value={data.incomingTransfers} onChange={v => patch('incomingTransfers', v)} />
       <Metric label="ED / Direct" value={data.edAdmissions} onChange={v => patch('edAdmissions', v)} />
-      <Metric label="OR Returns" value={data.orReturns} onChange={v => patch('orReturns', v)} />
-      <Metric label="Cath / EP" value={data.cathEpReturns} onChange={v => patch('cathEpReturns', v)} />
+      <Metric label="OR EXP Admits" value={data.orReturns} onChange={v => patch('orReturns', v)} />
+      <Metric label="Cath/EP Ext Admits" value={data.cathEpReturns} onChange={v => patch('cathEpReturns', v)} />
       <ReadOnlyMetric label="Possible DC" value={possibleDC} note="does not reduce projection" emphasis="bg-amber-50 border-amber-300 text-amber-900" />
       <ReadOnlyMetric label="Expected DC" value={expectedDC} note="reduces projection" emphasis="bg-emerald-50 border-emerald-300 text-emerald-900" />
       <Metric label="Outgoing Xfers" value={data.outgoingTransfers} onChange={v => patch('outgoingTransfers', v)} />
