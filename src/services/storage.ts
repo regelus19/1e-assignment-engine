@@ -124,7 +124,7 @@ export const StorageService = {
     if (targetDate && targetShift) {
       const target = shiftOrdinal(targetDate, targetShift);
       history = history
-        .filter(s => shiftOrdinal(s.date, s.shiftType) < target)
+        .filter(s => s.shiftType === targetShift && shiftOrdinal(s.date, s.shiftType) < target)
         .sort((a,b) => shiftOrdinal(b.date,b.shiftType) - shiftOrdinal(a.date,a.shiftType));
     }
     for (let i = 0; i < Math.min(history.length, 6); i += 1) {
