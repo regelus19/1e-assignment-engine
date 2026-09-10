@@ -26,6 +26,14 @@ export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtSt
   const reserve=roster.filter(s=>['ON_CALL','FLEXED'].includes(s.staffStatus)).length;
   const rosterNames=Object.fromEntries(roster.map(s=>[s.id,s.name]));
 
+  // The assignment board mirrors the active bedside rows from the Next Shift Staffing Roster,
+  // in exactly the same roster order. FLEXED/ON_CALL staff and support roles stay in the roster
+  // but do not appear as assignable bedside rows until their status/role makes them active bedside staff.
+  const assignmentRoster=useMemo(
+    ()=>roster.filter(s=>['CHG','RN','Preceptor'].includes(s.role)&&['ACTIVE','RECALLED'].includes(s.staffStatus)),
+    [roster]
+  );
+
   // SIMPLE SEMI-AUTO RULE:
   // Whatever the CN has already assigned on the board is fixed.
   // Semi-Auto preserves those room-to-nurse assignments and fills only the remaining occupied rooms.
@@ -35,7 +43,7 @@ export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtSt
   );
   const fixedRoomNumbers=Object.keys(fixedAssignments);
 
-  const pseudoShift:CurrentShiftState=useMemo(()=>({date,shiftType,roster,rooms,mtState,pctState,onCall,lastUpdatedAt:new Date().toISOString()}),[date,shiftType,roster,rooms,mtState,pctState,onCall]);
+  const pseudoShift:CurrentShiftState=useMemo(()=>({date,shiftType,roster:assignmentRoster,rooms,mtState,pctState,onCall,lastUpdatedAt:new Date().toISOString()}),[date,shiftType,assignmentRoster,rooms,mtState,pctState,onCall]);
 
   const updateRoom=(updated:PatientRoom)=>onRoomsChange(rooms.map(r=>r.roomNumber===updated.roomNumber?updated:r));
   const assignRoom=(roomNumber:string,nurseId:string|null)=>{
