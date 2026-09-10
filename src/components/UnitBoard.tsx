@@ -22,6 +22,7 @@ const pairLabel = (staff: NurseStaff, roster: NurseStaff[]) => {
 
 export const UnitBoard: React.FC<UnitBoardProps> = ({ rooms, roster, warnings, onRoomChange, onAssignRoom }) => {
   const [manualStaffId, setManualStaffId] = useState<string | null>(null);
+  const [recallMessage, setRecallMessage] = useState<string>('');
   const occupied = rooms.filter(r => r.isOccupied);
   const unassigned = occupied.filter(r => !r.assignedNurseId);
   const bedside = useMemo(() => roster.filter(s => ['RN', 'CHG', 'Preceptor'].includes(s.role)), [roster]);
@@ -40,11 +41,25 @@ export const UnitBoard: React.FC<UnitBoardProps> = ({ rooms, roster, warnings, o
   const clearStaff = (staffId: string) => roomsFor(staffId).forEach(r => onAssignRoom(r.roomNumber, null));
   const clearAll = () => occupied.filter(r => r.assignedNurseId).forEach(r => onAssignRoom(r.roomNumber, null));
   const recallPrevious = () => {
+    let recalled = 0;
+    let noToken = 0;
+    let noActiveMatch = 0;
+    let alreadyAssigned = 0;
     occupied.forEach(room => {
-      if (room.assignedNurseId || !room.patientStayId) return;
+      if (room.assignedNurseId) { alreadyAssigned += 1; return; }
+      if (!room.patientStayId) { noToken += 1; return; }
       const continuity = StorageService.findContinuity(room.patientStayId, roster);
-      if (continuity) onAssignRoom(room.roomNumber, continuity.nurseId);
+      if (continuity) {
+        onAssignRoom(room.roomNumber, continuity.nurseId);
+        recalled += 1;
+      } else noActiveMatch += 1;
     });
+    if (recalled > 0) {
+      setRecallMessage(`Recalled ${recalled} previous assignment${recalled === 1 ? '' : 's'}. Existing manual assignments were preserved.`);
+    } else {
+      const detail = [noToken ? `${noToken} room${noToken === 1 ? '' : 's'} missing a Stay Token` : '', noActiveMatch ? `${noActiveMatch} with no active prior-nurse match` : '', alreadyAssigned ? `${alreadyAssigned} already assigned` : ''].filter(Boolean).join(' • ');
+      setRecallMessage(`No previous assignments recalled${detail ? ` — ${detail}.` : '.'}`);
+    }
   };
 
   const renderRoomCard = (room: PatientRoom) => {
@@ -83,7 +98,7 @@ export const UnitBoard: React.FC<UnitBoardProps> = ({ rooms, roster, warnings, o
 
   return <div className="grid grid-cols-1 xl:grid-cols-[250px_minmax(0,1fr)] gap-4 items-start">
     <aside className="bg-white border-2 border-slate-300 rounded-xl overflow-hidden xl:sticky xl:top-4">
-      <div className="px-3 py-2 bg-slate-900 text-white"><div className="flex items-center justify-between gap-2"><div><div className="text-xs font-black uppercase">Tomorrow Assignment Board</div><div className="text-[9px] text-slate-300">Select RN → tap room numbers. Recall continuity first if useful.</div></div><button onClick={clearAll} className="text-[9px] border border-slate-600 rounded px-2 py-1">Clear All</button></div><button onClick={recallPrevious} className="mt-2 w-full bg-emerald-700 hover:bg-emerald-600 rounded px-2 py-1.5 text-[10px] font-black flex items-center justify-center gap-1"><RotateCcw className="w-3 h-3"/>Recall Previous Assignments</button></div>
+      <div className="px-3 py-2 bg-slate-900 text-white"><div className="flex items-center justify-between gap-2"><div><div className="text-xs font-black uppercase">Tomorrow Assignment Board</div><div className="text-[9px] text-slate-300">Select RN → tap room numbers. Recall continuity first if useful.</div></div><button onClick={clearAll} className="text-[9px] border border-slate-600 rounded px-2 py-1">Clear All</button></div><button onClick={recallPrevious} className="mt-2 w-full bg-emerald-700 hover:bg-emerald-600 rounded px-2 py-1.5 text-[10px] font-black flex items-center justify-center gap-1"><RotateCcw className="w-3 h-3"/>Recall Previous Assignments</button>{recallMessage && <div className="mt-2 rounded bg-slate-800 px-2 py-1.5 text-[9px] text-slate-200">{recallMessage}</div>}</div>
       <div className="divide-y divide-slate-100">{bedside.map(staff => { const rs = roomsFor(staff.id), selected = manualStaffId === staff.id, canAssign = ['ACTIVE','RECALLED'].includes(staff.staffStatus); return <div key={staff.id} className={`p-2 ${selected ? 'bg-indigo-50' : ''}`}><div className="flex items-center justify-between gap-1"><button disabled={!canAssign} onClick={() => selectStaff(staff)} className="text-left disabled:opacity-40"><div className={`text-xs font-black ${selected ? 'text-indigo-800' : 'text-slate-900'}`}>{pairLabel(staff, roster)}{staff.role === 'CHG' ? ' • CHG' : ''}</div><div className={`text-[8px] font-black ${selected ? 'text-indigo-700' : 'text-blue-700'}`}>{selected ? 'SELECTED — TAP ROOMS' : 'RAPID ASSIGN'}</div></button><div className="flex items-center gap-1"><span className="text-[9px] text-slate-500">{rs.length} pt</span>{rs.length > 0 && <button onClick={() => clearStaff(staff.id)} className="text-[8px] font-bold text-rose-700 border border-rose-200 rounded px-1.5 py-0.5">Clear</button>}</div></div><div className="flex flex-wrap gap-1 mt-1">{rs.map(r => <span key={r.roomNumber} className="inline-flex rounded border bg-slate-50 text-[9px] font-black"><span className="px-1.5 py-1">{r.roomNumber}</span><button onClick={() => onAssignRoom(r.roomNumber, null)} className="px-1 border-l"><X className="w-2.5 h-2.5"/></button></span>)}{!rs.length && <span className="text-[9px] text-slate-400">—</span>}</div></div>; })}</div>
       <div className={`p-2 border-t ${unassigned.length ? 'bg-rose-50' : 'bg-emerald-50'}`}><div className={`text-[10px] font-black ${unassigned.length ? 'text-rose-800' : 'text-emerald-800'}`}>NEEDS ASSIGNMENT ({unassigned.length})</div><div className="flex flex-wrap gap-1 mt-1">{unassigned.map(r => <button key={r.roomNumber} onClick={() => rapidAssign(r)} className="px-1.5 py-1 rounded border border-rose-300 bg-white text-[9px] font-black text-rose-800">{r.roomNumber}</button>)}</div></div>
     </aside>
