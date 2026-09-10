@@ -26,14 +26,6 @@ export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtSt
   const reserve=roster.filter(s=>['ON_CALL','FLEXED'].includes(s.staffStatus)).length;
   const rosterNames=Object.fromEntries(roster.map(s=>[s.id,s.name]));
 
-  // The assignment board mirrors the active bedside rows from the Next Shift Staffing Roster,
-  // in exactly the same roster order. FLEXED/ON_CALL staff and support roles stay in the roster
-  // but do not appear as assignable bedside rows until their status/role makes them active bedside staff.
-  const assignmentRoster=useMemo(
-    ()=>roster.filter(s=>['CHG','RN','Preceptor'].includes(s.role)&&['ACTIVE','RECALLED'].includes(s.staffStatus)),
-    [roster]
-  );
-
   // SIMPLE SEMI-AUTO RULE:
   // Whatever the CN has already assigned on the board is fixed.
   // Semi-Auto preserves those room-to-nurse assignments and fills only the remaining occupied rooms.
@@ -43,7 +35,9 @@ export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtSt
   );
   const fixedRoomNumbers=Object.keys(fixedAssignments);
 
-  const pseudoShift:CurrentShiftState=useMemo(()=>({date,shiftType,roster:assignmentRoster,rooms,mtState,pctState,onCall,lastUpdatedAt:new Date().toISOString()}),[date,shiftType,assignmentRoster,rooms,mtState,pctState,onCall]);
+  // IMPORTANT: the shared Live Assignment Board must receive the EXACT full Next Shift Staffing Roster.
+  // The board itself decides which rows can accept patients; it must not be given a filtered subset.
+  const pseudoShift:CurrentShiftState=useMemo(()=>({date,shiftType,roster,rooms,mtState,pctState,onCall,lastUpdatedAt:new Date().toISOString()}),[date,shiftType,roster,rooms,mtState,pctState,onCall]);
 
   const updateRoom=(updated:PatientRoom)=>onRoomsChange(rooms.map(r=>r.roomNumber===updated.roomNumber?updated:r));
   const assignRoom=(roomNumber:string,nurseId:string|null)=>{
@@ -103,7 +97,7 @@ export const TomorrowStaffing:React.FC<Props>=({date,shiftType,roster,rooms,mtSt
   };
 
   return <div className="space-y-5">
-    <div className="bg-slate-900 text-white rounded-xl p-4"><div className="flex flex-wrap justify-between gap-4"><div><div className="flex items-center gap-2"><CalendarDays className="w-4 h-4 text-blue-300"/><span className="text-xs uppercase font-black text-slate-300">Next Shift Plan</span></div><div className="text-xl font-black mt-1">{date} • {shiftType} Shift</div><div className="text-xs text-slate-400 mt-1">CN can pre-assign any rooms first, then Semi-Auto fills only the remaining patients. Recall Previous is optional.</div></div><div className="flex flex-wrap gap-2 text-xs"><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Planned Census <b>{census}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Active bedside RNs <b>{activeRNs}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Reserve <b>{reserve}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Recommendation <b>{fitLabel}</b></div></div></div></div>
+    <div className="bg-slate-900 text-white rounded-xl p-4"><div className="flex flex-wrap justify-between gap-4"><div><div className="flex items-center gap-2"><CalendarDays className="w-4 h-4 text-blue-300"/><span className="text-xs uppercase font-black text-slate-300">Next Shift Plan</span></div><div className="text-xl font-black mt-1">{date} • {shiftType} Shift</div><div className="text-xs text-slate-400 mt-1">CN can pre-assign any rooms first, then Semi-Auto fills only the remaining patients. Recall Previous is optional.</div></div><div className="flex flex-wrap gap-2 text-xs"><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Planned Census <b>{census}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Roster Rows <b>{roster.length}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Active bedside RNs <b>{activeRNs}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Reserve <b>{reserve}</b></div><div className="bg-slate-800 border border-slate-700 rounded px-3 py-2">Recommendation <b>{fitLabel}</b></div></div></div></div>
 
     <div className="bg-white rounded-xl border p-4 flex flex-wrap justify-between gap-3 items-end"><div className="flex flex-wrap gap-3 items-end"><div><label className="text-[10px] uppercase font-black text-slate-500 block">Next Shift Date</label><input type="date" value={date} onChange={e=>{onDateChange(e.target.value);resetContext();}} className="border rounded-lg px-3 py-2 text-xs"/></div><div><label className="text-[10px] uppercase font-black text-slate-500 block">Shift</label><select value={shiftType} onChange={e=>{onShiftTypeChange(e.target.value as 'Day'|'Night');resetContext();}} className="border rounded-lg px-3 py-2 text-xs"><option value="Day">Day</option><option value="Night">Night</option></select></div><div><label className="text-[10px] uppercase font-black text-slate-500 block">MT Coverage</label><select value={mtState} onChange={e=>onMtStateChange(e.target.value as MTCoverageState)} className="border rounded-lg px-3 py-2 text-xs"><option value="MT_PRESENT">MT Present</option><option value="RN_COVERING_MT">RN Covering MT</option><option value="MT_UNFILLED">MT Unfilled</option></select></div><div><label className="text-[10px] uppercase font-black text-slate-500 block">PCT Support</label><select value={pctState} onChange={e=>onPctStateChange(e.target.value as PCTCoverageState)} className="border rounded-lg px-3 py-2 text-xs"><option value="PCT_PRESENT">PCT Present</option><option value="PCT_NONE">No PCT</option></select></div></div><div className="flex flex-wrap gap-2"><button onClick={()=>generate(false)} className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs font-black flex gap-1"><Play className="w-3.5 h-3.5"/>Generate 3 Options</button><button onClick={()=>generate(true)} className="bg-indigo-600 text-white px-3 py-2 rounded-lg text-xs font-black flex gap-1" title="Pre-assign any rooms on the board first. Semi-Auto will preserve them and fill only the remaining occupied rooms."><Sparkles className="w-3.5 h-3.5"/>Semi-Auto Fill Rest{fixedRoomNumbers.length?` (${fixedRoomNumbers.length} pre-assigned)`:''}</button><button onClick={onSaveBaseline} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-bold flex gap-1"><Save className="w-3.5 h-3.5"/>Save Baseline</button></div></div>
 
