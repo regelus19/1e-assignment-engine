@@ -90,8 +90,8 @@ export function runRecommendationEngine(
   const allOccupied = rooms.filter(r => r.isOccupied);
   const uncoded = allOccupied.filter(r => r.acuityConfirmed === false);
   const occupied = allOccupied.filter(r => r.acuityConfirmed !== false);
-  const allowCharge = strategy === 'CAPACITY_EXCEPTION' ? true : chargeTakingPatients;
-  const allowQuad = strategy === 'CAPACITY_EXCEPTION' ? true : allowTeleQuad;
+  const allowCharge = chargeTakingPatients;
+  const allowQuad = allowTeleQuad;
 
   const nurses = staff.filter(s => ['ACTIVE', 'RECALLED'].includes(s.staffStatus) && bedside(s) && (s.role !== 'CHG' || allowCharge));
   const state: Record<string, { nurse: NurseStaff; assignedRooms: PatientRoom[]; reasons: string[] }> = {};
@@ -122,7 +122,13 @@ export function runRecommendationEngine(
       const candidateReasons = [`✓ ${n.capability} qualified`];
       const assignedICU = assigned.filter(x => x.acuity === 'ICU').length;
 
-      if (continuity?.nurseId === n.id) { candidate += 80; candidateReasons.push('✓ Continuity'); }
+      // Continuity is intentionally dominant after hard safety/capability/workload gates.
+      // A returning RN who had this same PatientStayID in recent finalized history should normally keep the patient.
+      if (continuity?.nurseId === n.id) {
+        const recencyBonus = Math.max(0, 40 - ((continuity.daysAgo - 1) * 8));
+        candidate += 180 + recencyBonus;
+        candidateReasons.push(`✓ STRONG CONTINUITY — previous assignment (${continuity.daysAgo === 1 ? 'most recent finalized shift' : `${continuity.daysAgo} shifts back`})`);
+      }
       if (assigned.length) {
         const geo = evaluateGeographicCluster([...assigned.map(x => x.roomNumber), room.roomNumber]);
         candidate += geo.score * 40;
@@ -168,11 +174,11 @@ export function runRecommendationEngine(
       }
 
       if (strategy === 'CAPACITY_EXCEPTION') {
-        if (n.role === 'CHG' && room.acuity === 'TELE') { candidate -= 20; candidateReasons.push('⚠ Charge RN takes 1 TELE as exception'); }
-        if (assigned.length === 3 && assigned.every(x => x.acuity === 'TELE') && room.acuity === 'TELE') { candidate -= 10; candidateReasons.push('⚠ TELE quad exception'); }
+        if (n.role === 'CHG' && room.acuity === 'TELE') { candidate -= 120; candidateReasons.push('⚠ Charge RN takes 1 TELE only as capacity exception'); }
+        if (assigned.length === 3 && assigned.every(x => x.acuity === 'TELE') && room.acuity === 'TELE') { candidate -= 140; candidateReasons.push('⚠ TELE quad only as capacity exception'); }
       }
 
-      if (n.role === 'CHG') candidate -= 30;
+      if (n.role === 'CHG') candidate -= 80;
       if (candidate > score) { score = candidate; best = n.id; reasons = candidateReasons; }
     }
 
