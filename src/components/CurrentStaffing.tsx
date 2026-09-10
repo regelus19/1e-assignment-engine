@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { AlertTriangle, Clock3, Play, RefreshCw, Save, Settings2 } from 'lucide-react';
 import { AssignmentWarning, CurrentShiftState, NurseStaff, OperationalEvent, PatientRoom, StaffStatus } from '../types';
 import { runRecommendationEngine } from '../services/recommendationEngine';
+import { postProcessRecommendation } from '../services/recommendationPostProcessor';
 import { StorageService } from '../services/storage';
 import { CurrentRosterPanel } from './CurrentRosterPanel';
 import { FloorPlanCurrentStaffing } from './FloorPlanCurrentStaffing';
@@ -25,12 +26,13 @@ export const CurrentStaffing:React.FC<Props>=({currentShift,onCurrentShiftChange
  const assignRoom=(roomNumber:string,nurseId:string|null)=>{saveState({...currentShift,rooms:currentShift.rooms.map(r=>r.roomNumber===roomNumber?{...r,assignedNurseId:nurseId}:r)});appendEvent({id:`evt-${Date.now()}`,timestamp:new Date().toISOString(),shiftDate:currentShift.date,shiftType:currentShift.shiftType,type:'ASSIGNMENT_CHANGE',roomNumber,summary:`Room ${roomNumber} ${nurseId?'assigned':'unassigned'}.`});};
  const updateStatus=(staff:NurseStaff,status:StaffStatus)=>saveState({...currentShift,roster:currentShift.roster.map(s=>s.id===staff.id?{...s,staffStatus:status}:s)});
  const updateSupport=(kind:'MT'|'PCT',value:string)=>saveState(kind==='MT'?{...currentShift,mtState:value as CurrentShiftState['mtState']}:{...currentShift,pctState:value as CurrentShiftState['pctState']});
+ const recommend=(strategy:'BALANCED'|'CONSERVE_SKILL_MIX'|'CAPACITY_EXCEPTION',charge:boolean,quad:boolean)=>postProcessRecommendation(runRecommendationEngine(currentShift.roster,currentShift.rooms,charge,quad,strategy),currentShift.roster,currentShift.rooms);
 
  const generate=()=>{
    const options:RecommendationOption[]=[
-     {id:'BALANCED',title:'Balanced / Spread ICU',subtitle:'Spreads ICU workload when skill mix allows and then pairs ICU with lower-acuity patients when appropriate.',result:runRecommendationEngine(currentShift.roster,currentShift.rooms,false,false,'BALANCED')},
-     {id:'CONSERVE_SKILL_MIX',title:'Preserve Critical-Care Skill Mix',subtitle:'More willing to pair two ICU patients on one qualified RN so another ICU/CVICU-capable RN remains available.',result:runRecommendationEngine(currentShift.roster,currentShift.rooms,false,false,'CONSERVE_SKILL_MIX')},
-     {id:'CAPACITY_EXCEPTION',title:'Capacity Exception',subtitle:'Uses normal limits first, but can consider one TELE patient for Charge and a TELE quad when needed. CN approval remains required.',result:runRecommendationEngine(currentShift.roster,currentShift.rooms,true,true,'CAPACITY_EXCEPTION')},
+     {id:'BALANCED',title:'Balanced / Spread ICU',subtitle:'Spreads ICU workload when skill mix allows and then pairs ICU with lower-acuity patients when appropriate.',result:recommend('BALANCED',false,false)},
+     {id:'CONSERVE_SKILL_MIX',title:'Preserve Critical-Care Skill Mix',subtitle:'More willing to pair two ICU patients on one qualified RN so another ICU/CVICU-capable RN remains available.',result:recommend('CONSERVE_SKILL_MIX',false,false)},
+     {id:'CAPACITY_EXCEPTION',title:'Capacity Exception',subtitle:'Uses normal limits first, but can consider one TELE patient for Charge and a TELE quad when needed. CN approval remains required.',result:recommend('CAPACITY_EXCEPTION',true,true)},
    ];
    setRecommendationOptions(options);
    setFitLabel('3 OPTIONS');
@@ -40,7 +42,7 @@ export const CurrentStaffing:React.FC<Props>=({currentShift,onCurrentShiftChange
 
  const applyOption=(option:RecommendationOption)=>{
    const result=option.result;
-   saveState({...currentShift,rooms:currentShift.rooms.map(r=>({...r,assignedNurseId:r.isOccupied?(result.assignments[r.roomNumber]||null):r.assignedNurseId}))});
+   saveState({...currentShift,rooms:currentShift.rooms.map(r=>({...r,assignedNurseId:result.assignments[r.roomNumber]||null}))});
    setWarnings(result.warnings);setUnassigned(result.unassignedRooms);setFitLabel(result.fitLabel);setRecommendationOptions([]);
    appendEvent({id:`evt-${Date.now()}-option`,timestamp:new Date().toISOString(),shiftDate:currentShift.date,shiftType:currentShift.shiftType,type:'RECOMMENDATION_GENERATED',summary:`Applied ${option.title} recommendation: ${result.fitLabel}; ${result.unassignedRooms.length} unassigned room(s).`});
  };
