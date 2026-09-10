@@ -58,7 +58,7 @@ export const RosterPlanner: React.FC<Props> = ({ roster, mtState, pctState, onRo
         <div className="p-4 border-b border-slate-200 flex justify-between items-center">
           <div>
             <h3 className="font-black text-sm uppercase tracking-wide">Next Shift Staffing Roster</h3>
-            <p className="text-xs text-slate-500 mt-1">The Live Assignment Board mirrors ACTIVE/RECALLED bedside staff from this roster in the same order.</p>
+            <p className="text-xs text-slate-500 mt-1">The Live Assignment Board mirrors every roster row in this same order. Only ACTIVE/RECALLED CHG, RN, and Preceptor rows can receive patient assignments.</p>
           </div>
           <button onClick={addStaff} className="text-xs font-bold bg-blue-600 text-white px-3 py-2 rounded-lg flex items-center gap-1"><Plus className="w-3.5 h-3.5"/> Add Staff</button>
         </div>
