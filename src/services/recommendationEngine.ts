@@ -95,8 +95,9 @@ export function runRecommendationEngine(
   const allowQuad = allowTeleQuad;
   const fixedNurseIds = new Set(Object.values(fixedAssignments));
 
-  // Semi-auto may intentionally preassign the Charge RN. Keep that CN-set room fixed,
-  // but do not make Charge available to receive additional auto-assigned rooms unless enabled.
+  // In Semi-Auto, a nurse who has any CN-set room is treated as a completed manual load.
+  // The engine may not add another patient to that nurse. This makes the Live Assignment Board
+  // an exact instruction for those nurses, not merely an anchor that Auto Generate can build on.
   const nurses = staff.filter(s => ['ACTIVE', 'RECALLED'].includes(s.staffStatus) && bedside(s) && (s.role !== 'CHG' || allowCharge || fixedNurseIds.has(s.id)));
   const state: Record<string, { nurse: NurseStaff; assignedRooms: PatientRoom[]; reasons: string[] }> = {};
   nurses.forEach(n => state[n.id] = { nurse: n, assignedRooms: [], reasons: [] });
@@ -109,7 +110,7 @@ export function runRecommendationEngine(
     if (r.flags.some(f => ['High Fall Risk', 'Confused', 'Sitter/Safety'].includes(f)) && !['109', '119'].includes(r.roomNumber)) warnings.push({ type: 'SAFETY_ROOM', severity: 'INFO', roomNumber: r.roomNumber, message: `Room ${r.roomNumber} has safety flags; 109/119 preferred.` });
   });
 
-  // Seed CN-set assignments first. They are protected from the automatic pass.
+  // Seed CN-set assignments first. They and the nurses' manual loads are protected from Auto Fill.
   for (const room of occupied) {
     const nurseId = fixedAssignments[room.roomNumber];
     if (!nurseId) continue;
@@ -136,7 +137,6 @@ export function runRecommendationEngine(
     }
   }
 
-  // Warn if the CN-set group itself exceeds configured workload limits. Do not silently change it.
   Object.values(state).forEach(st => {
     if (st.assignedRooms.length <= 1) return;
     const checkRooms: PatientRoom[] = [];
@@ -162,8 +162,9 @@ export function runRecommendationEngine(
     let reasons: string[] = [];
 
     for (const n of nurses) {
-      // A CN-fixed Charge assignment is honored, but Charge does not receive more automatic patients
-      // unless Charge-patient capacity is explicitly enabled.
+      // Any nurse represented on the Live Assignment Board in Semi-Auto is load-locked.
+      // Preserve exactly what the CN entered and distribute the rest to other nurses.
+      if (fixedNurseIds.has(n.id)) continue;
       if (n.role === 'CHG' && !allowCharge) continue;
       const assigned = state[n.id].assignedRooms;
       if (!isClinicallyQualified(n, room) || workloadBlockReason(n, assigned, room, allowQuad)) continue;
