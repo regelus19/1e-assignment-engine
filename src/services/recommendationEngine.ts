@@ -84,6 +84,7 @@ export function runRecommendationEngine(
   chargeTakingPatients = false,
   allowTeleQuad = false,
   strategy: RecommendationStrategy = 'BALANCED',
+  fixedAssignments: Record<string, string> = {},
 ): RecommendationResult {
   const warnings: AssignmentWarning[] = [];
   const assignments: Record<string, string> = {};
@@ -92,8 +93,11 @@ export function runRecommendationEngine(
   const occupied = allOccupied.filter(r => r.acuityConfirmed !== false);
   const allowCharge = chargeTakingPatients;
   const allowQuad = allowTeleQuad;
+  const fixedNurseIds = new Set(Object.values(fixedAssignments));
 
-  const nurses = staff.filter(s => ['ACTIVE', 'RECALLED'].includes(s.staffStatus) && bedside(s) && (s.role !== 'CHG' || allowCharge));
+  // Semi-auto may intentionally preassign the Charge RN. Keep that CN-set room fixed,
+  // but do not make Charge available to receive additional auto-assigned rooms unless enabled.
+  const nurses = staff.filter(s => ['ACTIVE', 'RECALLED'].includes(s.staffStatus) && bedside(s) && (s.role !== 'CHG' || allowCharge || fixedNurseIds.has(s.id)));
   const state: Record<string, { nurse: NurseStaff; assignedRooms: PatientRoom[]; reasons: string[] }> = {};
   nurses.forEach(n => state[n.id] = { nurse: n, assignedRooms: [], reasons: [] });
 
@@ -105,8 +109,51 @@ export function runRecommendationEngine(
     if (r.flags.some(f => ['High Fall Risk', 'Confused', 'Sitter/Safety'].includes(f)) && !['109', '119'].includes(r.roomNumber)) warnings.push({ type: 'SAFETY_ROOM', severity: 'INFO', roomNumber: r.roomNumber, message: `Room ${r.roomNumber} has safety flags; 109/119 preferred.` });
   });
 
+  // Seed CN-set assignments first. They are protected from the automatic pass.
+  for (const room of occupied) {
+    const nurseId = fixedAssignments[room.roomNumber];
+    if (!nurseId) continue;
+    const nurse = staff.find(s => s.id === nurseId);
+    if (!nurse || !['ACTIVE', 'RECALLED'].includes(nurse.staffStatus) || !bedside(nurse)) {
+      warnings.push({ type: 'CAPABILITY', severity: 'HIGH', roomNumber: room.roomNumber, message: `CN-set assignment for room ${room.roomNumber} cannot be validated because the selected nurse is not an active bedside RN.` });
+      continue;
+    }
+    if (!state[nurse.id]) state[nurse.id] = { nurse, assignedRooms: [], reasons: [] };
+    assignments[room.roomNumber] = nurse.id;
+    state[nurse.id].assignedRooms.push(room);
+    state[nurse.id].reasons.push(`Rm ${room.roomNumber}: 🔒 CN-set assignment preserved in Semi-Auto mode`);
+
+    if (!isClinicallyQualified(nurse, room)) {
+      warnings.push({ type: 'CAPABILITY', severity: 'HIGH', roomNumber: room.roomNumber, nurseName: nurse.name, message: `CN override warning: ${nurse.name} is manually assigned to room ${room.roomNumber} (${room.acuity}) but the nurse capability profile is ${nurse.capability}. Verify before applying.` });
+    }
+
+    const continuity = StorageService.findContinuity(room.patientStayId, staff);
+    if (continuity && continuity.nurseId !== nurse.id) {
+      warnings.push({
+        type: 'CONTINUITY', severity: 'INFO', roomNumber: room.roomNumber, nurseName: nurse.name,
+        message: `Continuity override: room ${room.roomNumber} was previously assigned to ${continuity.nurseName}, but the Charge Nurse fixed it to ${nurse.name}. Semi-Auto will respect the CN assignment.`,
+      });
+    }
+  }
+
+  // Warn if the CN-set group itself exceeds configured workload limits. Do not silently change it.
+  Object.values(state).forEach(st => {
+    if (st.assignedRooms.length <= 1) return;
+    const checkRooms: PatientRoom[] = [];
+    for (const r of st.assignedRooms) {
+      const reason = workloadBlockReason(st.nurse, checkRooms, r, allowQuad);
+      if (reason) {
+        warnings.push({ type: 'WORKLOAD_RATIO', severity: 'HIGH', roomNumber: r.roomNumber, nurseName: st.nurse.name, message: `CN-set workload review: ${reason} Semi-Auto preserved this manual assignment and will not override the Charge Nurse.` });
+        break;
+      }
+      checkRooms.push(r);
+    }
+  });
+
   const rank: Record<string, number> = { CVICU: 4, ICU: 3, PCU: 2, TELE: 1 };
-  const sorted = [...occupied].sort((a, b) => rank[b.acuity] - rank[a.acuity]);
+  const sorted = [...occupied]
+    .filter(r => !fixedAssignments[r.roomNumber])
+    .sort((a, b) => rank[b.acuity] - rank[a.acuity]);
 
   for (const room of sorted) {
     const continuity = StorageService.findContinuity(room.patientStayId, nurses);
@@ -115,6 +162,9 @@ export function runRecommendationEngine(
     let reasons: string[] = [];
 
     for (const n of nurses) {
+      // A CN-fixed Charge assignment is honored, but Charge does not receive more automatic patients
+      // unless Charge-patient capacity is explicitly enabled.
+      if (n.role === 'CHG' && !allowCharge) continue;
       const assigned = state[n.id].assignedRooms;
       if (!isClinicallyQualified(n, room) || workloadBlockReason(n, assigned, room, allowQuad)) continue;
 
@@ -122,8 +172,6 @@ export function runRecommendationEngine(
       const candidateReasons = [`✓ ${n.capability} qualified`];
       const assignedICU = assigned.filter(x => x.acuity === 'ICU').length;
 
-      // Continuity is intentionally dominant after hard safety/capability/workload gates.
-      // A returning RN who had this same PatientStayID in recent finalized history should normally keep the patient.
       if (continuity?.nurseId === n.id) {
         const recencyBonus = Math.max(0, 40 - ((continuity.daysAgo - 1) * 8));
         candidate += 180 + recencyBonus;
