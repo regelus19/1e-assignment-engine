@@ -1,7 +1,7 @@
 import React from 'react';
 import { FinalizedShiftSnapshot, NurseStaff, PatientRoom, OnCallProviders } from '../types';
 
-interface ShiftData { date:string; shiftType:string; roster:NurseStaff[]; rooms:PatientRoom[]; onCall?:OnCallProviders; }
+interface ShiftData { date:string; shiftType:string; roster:NurseStaff[]; rooms:PatientRoom[]; onCall?:OnCallProviders; pmOnCall?:OnCallProviders; }
 interface PrintSheetProps { date:string; shiftType:string; roster:NurseStaff[]; rooms:PatientRoom[]; onCall:OnCallProviders; previousShift?:FinalizedShiftSnapshot|null; nextShift?:ShiftData|null; }
 const first=(n:string)=>n.trim().split(/\s+/)[0]||n;
 const pairName=(s:NurseStaff,roster:NurseStaff[])=>{if(s.role!=='Preceptor'||!s.orientationPartnerId)return first(s.name);const p=roster.find(x=>x.id===s.orientationPartnerId);return p?`${first(s.name)}/${first(p.name)}`:first(s.name);};
@@ -43,7 +43,8 @@ export const PrintSheet:React.FC<PrintSheetProps>=({date,shiftType,roster,rooms,
  const day=candidates.find(x=>x.date===targetDate&&x.shiftType==='Day')||candidates.find(x=>x.shiftType==='Day')||null;
  const night=candidates.find(x=>x.date===targetDate&&x.shiftType==='Night')||candidates.find(x=>x.shiftType==='Night')||null;
  const emptyRoster:NurseStaff[]=[];const emptyRooms:PatientRoom[]=[];
- const amCall=day?.onCall||onCall,pmCall=night?.onCall||onCall;
+ const amCall=nextShift?.date===targetDate&&nextShift?.onCall ? nextShift.onCall : day?.onCall||onCall;
+ const pmCall=nextShift?.date===targetDate&&nextShift?.pmOnCall ? nextShift.pmOnCall : night?.onCall||onCall;
  return <div className="bg-white text-black px-2 py-1 font-serif mx-auto print:p-0 print-sheet-portrait" style={{maxWidth:'7.8in'}}>
    <div className="text-center mb-1"><h1 className="text-[17px] font-black tracking-wide">1 EAST DAILY STAFFING ASSIGNMENTS</h1><div className="text-[11px] font-bold">Cardiac Universal Bed (CUB) Unit</div></div>
    <ShiftTable title="AM SHIFT" date={day?.date||targetDate} roster={day?.roster||emptyRoster} rooms={day?.rooms||emptyRooms}/>
