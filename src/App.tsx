@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AssignmentWarning, CurrentShiftState, FinalizedShiftSnapshot, ForecastEvent, MTCoverageState, NurseStaff, OnCallProviders, OperationalEvent, PatientRoom, PCTCoverageState, PlanBaseline } from './types';
 import { StorageService } from './services/storage';
+import { downloadDailyStaffingExcel } from './services/excelExport';
 import { MRS_CONFIG, getMRSStatus } from './config/mrs';
 import { PrintSheet } from './components/PrintSheet';
 import { NextShiftForecast } from './components/NextShiftForecast';
@@ -8,7 +9,7 @@ import { RosterPlanner } from './components/RosterPlanner';
 import { CurrentStaffing } from './components/CurrentStaffing';
 import { TomorrowStaffing } from './components/TomorrowStaffing';
 import { HistoryView } from './components/HistoryView';
-import { CalendarDays, Clock3, History, Printer, RotateCcw, Settings2 } from 'lucide-react';
+import { CalendarDays, Clock3, Download, History, Printer, RotateCcw, Settings2 } from 'lucide-react';
 
 const tomorrowIso=()=>{const d=new Date();d.setDate(d.getDate()+1);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const CURRENT_MRS_KEY='1E_CURRENT_MRS_INPUT',PROJECTED_MRS_KEY='1E_PROJECTED_MRS_INPUT',PLAN_DATE_KEY='1E_PLAN_DATE',SHIFT_KEY='1E_SHIFT_TYPE',PLAN_SOURCE_KEY='1E_PLAN_SOURCE_SHIFT',PM_ONCALL_KEY='1E_NEXT_DAY_PM_ONCALL';
@@ -47,6 +48,7 @@ export const App:React.FC=()=>{
  const reset=()=>{StorageService.resetToDefaults();localStorage.removeItem(PLAN_SOURCE_KEY);localStorage.removeItem(PM_ONCALL_KEY);setRoster(StorageService.loadStaff());setRooms(StorageService.loadRooms());setOnCall(StorageService.loadOnCall());setPmOnCall({...EMPTY_ONCALL});setForecastEvents(StorageService.loadForecast());setWarnings([]);setCurrentShift(StorageService.loadCurrentShift());setHistory([]);setActiveTab('current')};
  const refreshHistory=()=>setHistory(StorageService.loadHistory());const previousShift=history[0]||null;
  const openPrint=()=>{refreshHistory();setPlanBaseline(StorageService.loadPlanBaseline());setActiveTab('print')};
+ const downloadExcel=()=>{const savedPlan=StorageService.loadPlanBaseline();setPlanBaseline(savedPlan);downloadDailyStaffingExcel(currentShift,previousShift,savedPlan);};
 
  return <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
   <header className="bg-slate-900 text-white px-6 py-3 no-print"><div className="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-4"><div><h1 className="font-black text-lg">1E FLOW & ASSIGNMENT BOARD</h1><p className="text-xs text-slate-400">Current operations • next-shift planning • readiness</p></div><div className="flex gap-2 text-xs"><div className="bg-slate-800 px-3 py-1.5 rounded">Current Census <b>{currentCensus}</b></div><div className="bg-slate-800 px-3 py-1.5 rounded">Current Bedside RNs <b>{currentActiveRNs}</b></div><div className="bg-slate-800 px-3 py-1.5 rounded">Next Shift Census <b>{plannedCensus}</b></div>{supportRisk.length>0&&<div className="bg-amber-950 px-3 py-1.5 rounded text-amber-200">{supportRisk.join(' • ')}</div>}</div></div></header>
@@ -59,7 +61,7 @@ export const App:React.FC=()=>{
    </div>}
    {activeTab==='forecast'&&<NextShiftForecast events={forecastEvents} roster={roster} rooms={rooms} mtState={mtState} pctState={pctState} onAddEvent={e=>{const u=[...forecastEvents,e];setForecastEvents(u);StorageService.saveForecast(u)}} onDeleteEvent={id=>{const u=forecastEvents.filter(e=>e.id!==id);setForecastEvents(u);StorageService.saveForecast(u)}}/>}
    {activeTab==='history'&&<HistoryView plan={planBaseline} current={currentShift} history={history} events={events}/>} 
-   {activeTab==='print'&&<div><div className="no-print mb-4 flex justify-between bg-white p-4 rounded border"><span className="text-sm">Portrait daily assignment sheet: AM shift on top, AM/PM on-call coverage in the middle, PM shift on the bottom. Saved Next Shift Plan is included automatically.</span><button onClick={()=>window.print()} className="bg-blue-600 text-white px-4 py-2 rounded text-xs font-bold">Print Daily Assignment Sheet</button></div><PrintSheet date={currentShift.date} shiftType={currentShift.shiftType} roster={currentShift.roster} rooms={currentShift.rooms} onCall={currentShift.onCall} previousShift={previousShift} nextShift={planBaseline?{date:planBaseline.date,shiftType:planBaseline.shiftType,roster:planBaseline.roster,rooms:planBaseline.rooms,onCall:planBaseline.onCall,pmOnCall:planBaseline.pmOnCall}:null}/></div>}
+   {activeTab==='print'&&<div><div className="no-print mb-4 flex flex-wrap justify-between gap-3 bg-white p-4 rounded border"><span className="text-sm">Portrait daily assignment sheet: AM shift on top, AM/PM on-call coverage in the middle, PM shift on the bottom. Saved Next Shift Plan is included automatically.</span><div className="flex flex-wrap gap-2"><button onClick={downloadExcel} className="bg-emerald-600 text-white px-4 py-2 rounded text-xs font-bold flex items-center gap-1.5"><Download className="w-4 h-4"/>Download Excel</button><button onClick={()=>window.print()} className="bg-blue-600 text-white px-4 py-2 rounded text-xs font-bold flex items-center gap-1.5"><Printer className="w-4 h-4"/>Print Daily Assignment Sheet</button></div></div><PrintSheet date={currentShift.date} shiftType={currentShift.shiftType} roster={currentShift.roster} rooms={currentShift.rooms} onCall={currentShift.onCall} previousShift={previousShift} nextShift={planBaseline?{date:planBaseline.date,shiftType:planBaseline.shiftType,roster:planBaseline.roster,rooms:planBaseline.rooms,onCall:planBaseline.onCall,pmOnCall:planBaseline.pmOnCall}:null}/></div>}
   </main>
  </div>;
 };
