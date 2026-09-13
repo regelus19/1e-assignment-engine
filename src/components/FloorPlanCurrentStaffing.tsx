@@ -21,7 +21,9 @@ const ACUITY_STYLES: Record<AcuityLevel, { badge: string; room: string }> = {
 };
 
 const FLAGS: { flag: ComplexityFlag; label: string; icon: React.ReactNode }[] = [
-  { flag: 'Vent', label: 'Vent', icon: <Wind className="w-3.5 h-3.5" /> }, { flag: 'Pressors', label: 'Pressors', icon: <Activity className="w-3.5 h-3.5" /> },
+  { flag: 'Vent', label: 'Vent', icon: <Wind className="w-3.5 h-3.5" /> },
+  { flag: 'Vasoactive Support', label: 'Vasoactive Support', icon: <Activity className="w-3.5 h-3.5" /> },
+  { flag: 'Inotropic Support', label: 'Inotropic Support', icon: <HeartPulse className="w-3.5 h-3.5" /> },
   { flag: 'Impella/IABP', label: 'Impella/IABP', icon: <HeartPulse className="w-3.5 h-3.5" /> }, { flag: 'Fresh Post-Op', label: 'Fresh Post Op', icon: <CircleDot className="w-3.5 h-3.5" /> },
   { flag: 'HD/Dialysis', label: 'HD/Dialysis', icon: <Droplets className="w-3.5 h-3.5" /> }, { flag: 'Isolation', label: 'Isolation', icon: <ShieldAlert className="w-3.5 h-3.5" /> },
   { flag: 'Sitter/Safety', label: 'Sitter/Safety', icon: <Users className="w-3.5 h-3.5" /> }, { flag: 'High Fall Risk', label: 'High Fall Risk', icon: <AlertTriangle className="w-3.5 h-3.5" /> },
@@ -41,11 +43,33 @@ const pairLabel = (staff: NurseStaff, roster: NurseStaff[]) => {
 };
 const isBedsideRole = (staff: NurseStaff) => ['RN', 'CHG', 'Preceptor'].includes(staff.role);
 const canReceivePatients = (staff: NurseStaff) => isBedsideRole(staff) && ['ACTIVE', 'RECALLED'].includes(staff.staffStatus);
+const roomHasFlag = (room: PatientRoom, flag: ComplexityFlag) => flag === 'Vasoactive Support'
+  ? room.flags.includes('Vasoactive Support') || room.flags.includes('Pressors')
+  : room.flags.includes(flag);
 const dischargeHouse = (room: PatientRoom, size='w-3 h-3') => room.flags.includes('Expected DC')
   ? <Home aria-label="Expected discharge" className={`${size} inline-block text-emerald-600 fill-emerald-100`} />
   : room.flags.includes('Possible DC')
     ? <Home aria-label="Possible discharge" className={`${size} inline-block text-amber-500 fill-amber-100`} />
     : null;
+const roomFlagIcons = (room: PatientRoom) => {
+  const items: { key: string; label: string; node: React.ReactNode }[] = [];
+  if (room.flags.includes('Vent')) items.push({ key:'vent', label:'Vent', node:<Wind className="w-2.5 h-2.5 text-sky-700"/> });
+  if (room.flags.includes('Vasoactive Support') || room.flags.includes('Pressors')) items.push({ key:'vaso', label:'Vasoactive Support', node:<Activity className="w-2.5 h-2.5 text-rose-700"/> });
+  if (room.flags.includes('Inotropic Support')) items.push({ key:'ino', label:'Inotropic Support', node:<HeartPulse className="w-2.5 h-2.5 text-fuchsia-700"/> });
+  if (room.flags.includes('Impella/IABP')) items.push({ key:'mcs', label:'Impella/IABP', node:<HeartPulse className="w-2.5 h-2.5 text-purple-700"/> });
+  if (room.flags.includes('Fresh Post-Op')) items.push({ key:'postop', label:'Fresh Post Op', node:<CircleDot className="w-2.5 h-2.5 text-orange-700"/> });
+  if (room.flags.includes('HD/Dialysis')) items.push({ key:'hd', label:'HD/Dialysis', node:<Droplets className="w-2.5 h-2.5 text-cyan-700"/> });
+  if (room.flags.includes('Isolation')) items.push({ key:'iso', label:'Isolation', node:<ShieldAlert className="w-2.5 h-2.5 text-amber-700"/> });
+  if (room.flags.includes('Sitter/Safety')) items.push({ key:'sitter', label:'Sitter/Safety', node:<Users className="w-2.5 h-2.5 text-indigo-700"/> });
+  if (room.flags.includes('High Fall Risk')) items.push({ key:'fall', label:'High Fall Risk', node:<AlertTriangle className="w-2.5 h-2.5 text-yellow-700"/> });
+  if (room.flags.includes('Confused')) items.push({ key:'confused', label:'Confused', node:<Brain className="w-2.5 h-2.5 text-violet-700"/> });
+  if (room.flags.includes('Admission')) items.push({ key:'admit', label:'Recent Admission', node:<LogIn className="w-2.5 h-2.5 text-blue-700"/> });
+  if (room.flags.includes('Transfer')) items.push({ key:'transfer', label:'Pending Transfer', node:<MoveRight className="w-2.5 h-2.5 text-slate-700"/> });
+  if (room.flags.includes('Possible DC')) items.push({ key:'possdc', label:'Possible DC', node:<Home className="w-2.5 h-2.5 text-amber-500 fill-amber-100"/> });
+  if (room.flags.includes('Expected DC')) items.push({ key:'expdc', label:'Expected DC', node:<Home className="w-2.5 h-2.5 text-emerald-600 fill-emerald-100"/> });
+  if (room.flags.includes('BLOCKED')) items.push({ key:'blocked', label:'BLOCKED', node:<Ban className="w-2.5 h-2.5 text-rose-800"/> });
+  return items.length ? <span className="absolute left-full ml-1 top-1/2 -translate-y-1/2 flex flex-col gap-0.5 pointer-events-none">{items.map(i=><span key={i.key} title={i.label} className="w-4 h-4 rounded bg-white/95 border border-slate-300 shadow-sm flex items-center justify-center">{i.node}</span>)}</span> : null;
+};
 
 export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoomChange, onAssignRoom, onRecallPrevious }) => {
   const occupied = currentShift.rooms.filter(r => r.isOccupied);
@@ -62,8 +86,9 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
   const setAcuity = (acuity: AcuityLevel) => selectedRoom && onRoomChange({ ...selectedRoom, acuity, acuityConfirmed: true, isOccupied: true });
   const toggleFlag = (flag: ComplexityFlag) => {
     if (!selectedRoom) return;
-    const exists = selectedRoom.flags.includes(flag);
-    let flags = exists ? selectedRoom.flags.filter(f => f !== flag) : [...selectedRoom.flags, flag];
+    const exists = roomHasFlag(selectedRoom, flag);
+    let flags = selectedRoom.flags.filter(f => !(flag === 'Vasoactive Support' && (f === 'Pressors' || f === 'Vasoactive Support')) && f !== flag);
+    if (!exists) flags = [...flags, flag];
     if (!exists && flag === 'Expected DC') flags = flags.filter(f => f !== 'Possible DC');
     if (!exists && flag === 'Possible DC') flags = flags.filter(f => f !== 'Expected DC');
     onRoomChange({ ...selectedRoom, flags });
@@ -113,7 +138,7 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
       {manualStaff && <div className="bg-indigo-50 border-2 border-indigo-400 rounded-xl px-4 py-3 flex justify-between gap-3"><div><div className="text-xs font-black uppercase text-indigo-900">Rapid Manual Assignment Active</div><div className="text-sm text-indigo-900"><b>{pairLabel(manualStaff, currentShift.roster)}</b> selected — click occupied rooms in succession. Clicking one of the same nurse's rooms again unassigns it.</div></div><button onClick={() => setManualStaffId(null)} className="bg-white border border-indigo-300 rounded-lg px-3 py-2 text-xs font-bold text-indigo-800 flex items-center gap-1"><X className="w-3.5 h-3.5" />Done</button></div>}
 
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b flex justify-between"><div><h2 className="font-black text-sm">1 East Floor Plan — Current Staffing</h2><p className="text-[11px] text-slate-500">✓ assigned • red outline needs assignment • yellow house = Possible DC • green house = Expected DC.</p></div><div className="text-[11px] text-slate-500">Selected: <b>{selectedRoom?.roomNumber}</b></div></div>
+        <div className="px-4 py-3 border-b flex justify-between"><div><h2 className="font-black text-sm">1 East Floor Plan — Current Staffing</h2><p className="text-[11px] text-slate-500">✓ assigned • red outline needs assignment • quick-flag icons appear beside room tiles • yellow house = Possible DC • green house = Expected DC.</p></div><div className="text-[11px] text-slate-500">Selected: <b>{selectedRoom?.roomNumber}</b></div></div>
         <div className="relative bg-slate-50 overflow-hidden" style={{ aspectRatio: '1365 / 1152' }}>
           <img src={floorPlanImage} alt="1 East unit floor plan" className="absolute inset-0 w-full h-full object-contain opacity-75" />
           {currentShift.rooms.map(r => {
@@ -125,10 +150,11 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
             const acuityMissing = r.isOccupied && r.acuityConfirmed === false;
             const style = !r.isOccupied ? 'bg-white/90 border-slate-400 text-slate-500' : acuityMissing ? 'bg-amber-100 border-amber-500 text-amber-950' : ACUITY_STYLES[r.acuity].room;
             return <button key={r.roomNumber} onClick={() => roomClick(r)} className={`absolute -translate-x-1/2 -translate-y-1/2 w-[5.7%] min-w-[44px] rounded-md border-2 shadow-sm px-1 py-1 text-center ${style} ${selected ? 'ring-4 ring-slate-900/20 z-20' : 'z-10'} ${need ? 'outline outline-4 outline-rose-500/70' : ''} ${belongs ? 'ring-4 ring-indigo-500/70' : ''}`} style={{ left: `${pos.left}%`, top: `${pos.top}%` }}>
-              <div className="font-black text-[11px] flex items-center justify-center gap-0.5">{r.roomNumber}{r.isOccupied && r.assignedNurseId ? ' ✓' : ''}{r.isOccupied && dischargeHouse(r)}</div>
+              <div className="font-black text-[11px] flex items-center justify-center gap-0.5">{r.roomNumber}{r.isOccupied && r.assignedNurseId ? ' ✓' : ''}</div>
               <div className="text-[8px] font-bold">{r.isOccupied ? (acuityMissing ? 'ACUITY?' : r.acuity) : 'EMPTY'}</div>
               {r.isOccupied && <div className={`text-[8px] truncate ${need ? 'font-black text-rose-800' : ''}`}>{nurse ? pairLabel(nurse, currentShift.roster) : 'UNASSIGNED'}</div>}
               {r.flags.includes('BLOCKED') && <div className="text-[7px] font-black text-rose-900">BLOCKED</div>}
+              {r.isOccupied && roomFlagIcons(r)}
             </button>;
           })}
         </div>
@@ -144,7 +170,7 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoom
       <div className="mt-3"><label className="text-[10px] uppercase font-black text-slate-500">Acuity</label>{selectedRoom.isOccupied && selectedRoom.acuityConfirmed === false && <div className="mb-1 text-[9px] font-black text-amber-700">ACUITY NOT SET — choose one below</div>}<select value={selectedRoom.acuity} onChange={e => setAcuity(e.target.value as AcuityLevel)} className={`w-full border rounded-lg px-3 py-2 text-sm font-black ${selectedRoom.acuityConfirmed === false ? 'bg-amber-50 border-amber-400 text-amber-900' : ACUITY_STYLES[selectedRoom.acuity].badge}`}><option>CVICU</option><option>ICU</option><option>PCU</option><option>TELE</option></select></div>
       <div className="mt-3"><label className="text-[10px] uppercase font-black text-slate-500">Assigned RN</label><select value={selectedRoom.assignedNurseId || ''} onChange={e => onAssignRoom(selectedRoom.roomNumber, e.target.value || null)} className="w-full border rounded-lg px-3 py-2 text-sm"><option value="">Unassigned</option>{assignableStaff.map(s => <option key={s.id} value={s.id}>{pairLabel(s, currentShift.roster)} — {s.capability} / {s.staffStatus}</option>)}</select>{assignedNurse && <div className="text-[10px] text-slate-500 mt-1">Current: <b>{pairLabel(assignedNurse, currentShift.roster)}</b></div>}</div>
       <div className="mt-3"><label className="text-[10px] uppercase font-black text-slate-500">Non-PHI Stay Token</label><input value={selectedRoom.patientStayId} onChange={e => onRoomChange({ ...selectedRoom, patientStayId: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" /></div>
-      <div className="mt-4"><div className="text-xs font-black mb-2">Quick Flags</div><div className="grid grid-cols-2 gap-1.5">{FLAGS.map(({ flag, label, icon }) => <button key={flag} onClick={() => toggleFlag(flag)} className={`min-h-9 flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[10px] font-bold text-left ${selectedRoom.flags.includes(flag) ? 'bg-blue-50 border-blue-400 text-blue-800' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>{icon}<span>{label}</span></button>)}</div></div>
+      <div className="mt-4"><div className="text-xs font-black mb-2">Quick Flags</div><div className="grid grid-cols-2 gap-1.5">{FLAGS.map(({ flag, label, icon }) => <button key={flag} onClick={() => toggleFlag(flag)} className={`min-h-9 flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[10px] font-bold text-left ${roomHasFlag(selectedRoom, flag) ? 'bg-blue-50 border-blue-400 text-blue-800' : 'bg-slate-50 border-slate-200 text-slate-600'}`}>{icon}<span>{label}</span></button>)}</div></div>
     </>}</aside>
   </div>;
 };
