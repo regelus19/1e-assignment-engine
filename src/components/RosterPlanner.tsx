@@ -34,6 +34,14 @@ export const RosterPlanner: React.FC<Props> = ({ roster, mtState, pctState, onRo
 
   const removeStaff = (id: string) => onRosterChange(roster.filter(s => s.id !== id));
 
+  const onCallFields = ([
+    ['intensivist','Intensivist'],
+    ['cardiothoracic','Cardiothoracic'],
+    ['acuteMI','Acute MI'],
+    ['cardiology','Cardiology'],
+    ['hospitalist','Hospitalist']
+  ] as const);
+
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -93,12 +101,21 @@ export const RosterPlanner: React.FC<Props> = ({ roster, mtState, pctState, onRo
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-4">
-        <h3 className="font-black text-sm uppercase tracking-wide mb-3">On-Call Providers</h3>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-          {([['intensivist','Intensivist'],['cardiothoracic','Cardiothoracic'],['acuteMI','Acute MI'],['cardiology','Cardiology'],['hospitalist','Hospitalist']] as const).map(([key,label]) => (
+        <div className="mb-3">
+          <h3 className="font-black text-sm uppercase tracking-wide">Next Shift On-Call Providers</h3>
+          <p className="text-xs text-slate-500 mt-1">Enter the coverage for this planned shift. Use a new line when two providers need to appear in the same specialty box.</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+          {onCallFields.map(([key,label]) => (
             <div key={key}>
               <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">{label}</label>
-              <input value={onCall[key]} onChange={e => onOnCallChange({ ...onCall, [key]: e.target.value })} className="w-full border rounded px-2 py-1.5 text-xs" />
+              <textarea
+                rows={key === 'cardiothoracic' || key === 'hospitalist' ? 3 : 2}
+                value={onCall[key]}
+                onChange={e => onOnCallChange({ ...onCall, [key]: e.target.value })}
+                placeholder={key === 'cardiothoracic' || key === 'hospitalist' ? 'Provider 1\nProvider 2' : 'Provider / coverage'}
+                className="w-full border rounded px-2 py-1.5 text-xs resize-y"
+              />
             </div>
           ))}
         </div>
