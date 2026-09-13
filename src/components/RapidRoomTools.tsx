@@ -13,10 +13,11 @@ const acuities:AcuityLevel[]=['CVICU','ICU','PCU','TELE'];
 const flags:{value:ComplexityFlag;label:string}[]=[
   {value:'Possible DC',label:'Possible DC'}, {value:'Expected DC',label:'Expected DC'}, {value:'Fresh Post-Op',label:'Fresh Post Op'},
   {value:'Transfer',label:'Pending Transfer'}, {value:'Admission',label:'Recent Admission'}, {value:'BLOCKED',label:'BLOCKED'},
-  {value:'Vent',label:'Vent'}, {value:'Pressors',label:'Pressors'}, {value:'Impella/IABP',label:'Impella/IABP'}, {value:'HD/Dialysis',label:'HD/Dialysis'},
+  {value:'Vent',label:'Vent'}, {value:'Vasoactive Support',label:'Vasoactive Support'}, {value:'Inotropic Support',label:'Inotropic Support'}, {value:'Impella/IABP',label:'Impella/IABP'}, {value:'HD/Dialysis',label:'HD/Dialysis'},
   {value:'Isolation',label:'Isolation'}, {value:'Sitter/Safety',label:'Sitter/Safety'}, {value:'High Fall Risk',label:'High Fall Risk'}, {value:'Confused',label:'Confused'}
 ];
 const acuityStyle:Record<AcuityLevel,string>={CVICU:'bg-rose-100 border-rose-300 text-rose-800',ICU:'bg-orange-100 border-orange-300 text-orange-800',PCU:'bg-blue-100 border-blue-300 text-blue-800',TELE:'bg-emerald-100 border-emerald-300 text-emerald-800'};
+const roomHasFlag=(room:PatientRoom,flag:ComplexityFlag)=>flag==='Vasoactive Support'?room.flags.includes('Vasoactive Support')||room.flags.includes('Pressors'):room.flags.includes(flag);
 
 export const RapidRoomTools:React.FC<Props>=({rooms,onRoomChange})=>{
   const [tool,setTool]=useState<Tool>(null);
@@ -40,8 +41,9 @@ export const RapidRoomTools:React.FC<Props>=({rooms,onRoomChange})=>{
       return;
     }
 
-    const active=room.flags.includes(tool.value);
-    let nextFlags=active?room.flags.filter(f=>f!==tool.value):[...room.flags,tool.value];
+    const active=roomHasFlag(room,tool.value);
+    let nextFlags=room.flags.filter(f=>!(tool.value==='Vasoactive Support'&&(f==='Pressors'||f==='Vasoactive Support'))&&f!==tool.value);
+    if(!active) nextFlags=[...nextFlags,tool.value];
     if(!active&&tool.value==='Expected DC') nextFlags=nextFlags.filter(f=>f!=='Possible DC');
     if(!active&&tool.value==='Possible DC') nextFlags=nextFlags.filter(f=>f!=='Expected DC');
     onRoomChange({...room,flags:nextFlags});
@@ -63,7 +65,7 @@ export const RapidRoomTools:React.FC<Props>=({rooms,onRoomChange})=>{
       <div className="grid grid-cols-2 gap-1">{flags.map(f=>{const active=tool?.kind==='flag'&&tool.value===f.value;const isPossible=f.value==='Possible DC',isExpected=f.value==='Expected DC';return <button key={f.value} onClick={()=>toggleTool({kind:'flag',value:f.value})} className={`rounded border px-1.5 py-1.5 text-[9px] font-bold text-left flex items-center gap-1 ${active?'bg-slate-800 text-white border-slate-800':isPossible?'bg-amber-50 text-amber-800 border-amber-200':isExpected?'bg-emerald-50 text-emerald-800 border-emerald-200':'bg-slate-50 text-slate-700 border-slate-200'}`}>{(isPossible||isExpected)&&<Home className={`w-3 h-3 ${active?'text-white':isExpected?'text-emerald-600':'text-amber-500'}`}/>}<span>{f.label}{active?' ✓':''}</span></button>})}</div>
     </div>
 
-    {tool && <div className="border-t pt-2"><div className="text-[9px] font-black text-slate-700 mb-1">{tool.kind==='acuity'?`Set / toggle ${tool.value} for:`:tool.kind==='status'?`Mark rooms ${tool.value==='OCCUPIED'?'occupied':'vacant'}:`:`Rapid assign ${flags.find(f=>f.value===tool.value)?.label} to:`}</div><div className="flex flex-wrap gap-1">{targetRooms.map(r=>{const active=tool.kind==='acuity'?(r.acuityConfirmed!==false&&r.acuity===tool.value):tool.kind==='status'?(tool.value==='OCCUPIED'?r.isOccupied:!r.isOccupied):r.flags.includes(tool.value);return <button key={r.roomNumber} onClick={()=>apply(r)} className={`rounded border px-1.5 py-1 text-[9px] font-black ${active?'bg-slate-800 text-white border-slate-800':'bg-white text-slate-700 border-slate-300'}`}>{r.roomNumber}{!r.isOccupied?' · V':''}{active?' ✓':''}</button>})}</div><div className="text-[8px] text-slate-500 mt-1">Tap as many rooms as needed. Tap a checked room again to remove the selected flag. Possible DC and Expected DC remain mutually exclusive.</div><button onClick={()=>setTool(null)} className="mt-2 text-[9px] font-bold text-slate-500 underline">Clear rapid tool</button></div>}
+    {tool && <div className="border-t pt-2"><div className="text-[9px] font-black text-slate-700 mb-1">{tool.kind==='acuity'?`Set / toggle ${tool.value} for:`:tool.kind==='status'?`Mark rooms ${tool.value==='OCCUPIED'?'occupied':'vacant'}:`:`Rapid assign ${flags.find(f=>f.value===tool.value)?.label} to:`}</div><div className="flex flex-wrap gap-1">{targetRooms.map(r=>{const active=tool.kind==='acuity'?(r.acuityConfirmed!==false&&r.acuity===tool.value):tool.kind==='status'?(tool.value==='OCCUPIED'?r.isOccupied:!r.isOccupied):roomHasFlag(r,tool.value);return <button key={r.roomNumber} onClick={()=>apply(r)} className={`rounded border px-1.5 py-1 text-[9px] font-black ${active?'bg-slate-800 text-white border-slate-800':'bg-white text-slate-700 border-slate-300'}`}>{r.roomNumber}{!r.isOccupied?' · V':''}{active?' ✓':''}</button>})}</div><div className="text-[8px] text-slate-500 mt-1">Tap as many rooms as needed. Tap a checked room again to remove the selected flag. Possible DC and Expected DC remain mutually exclusive.</div><button onClick={()=>setTool(null)} className="mt-2 text-[9px] font-bold text-slate-500 underline">Clear rapid tool</button></div>}
 
     {uncoded.length>0&&<div className="bg-amber-50 border border-amber-300 rounded-lg p-2"><div className="text-[9px] font-black text-amber-900">NEEDS ACUITY ({uncoded.length})</div><div className="flex flex-wrap gap-1 mt-1">{uncoded.map(r=><span key={r.roomNumber} className="rounded border border-amber-300 bg-white px-1.5 py-1 text-[9px] font-black text-amber-900">{r.roomNumber}</span>)}</div></div>}
     {vacantWithPlannedAcuity.length>0&&<div className="bg-blue-50 border border-blue-200 rounded-lg p-2"><div className="text-[9px] font-black text-blue-900">VACANT ROOMS WITH PLANNED ACUITY ({vacantWithPlannedAcuity.length})</div><div className="flex flex-wrap gap-1 mt-1">{vacantWithPlannedAcuity.map(r=><span key={r.roomNumber} className="rounded border border-blue-200 bg-white px-1.5 py-1 text-[9px] font-black text-blue-900">{r.roomNumber} · {r.acuity}</span>)}</div></div>}
