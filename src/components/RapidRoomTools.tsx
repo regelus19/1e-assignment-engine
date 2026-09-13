@@ -11,7 +11,7 @@ type Tool =
 
 const acuities:AcuityLevel[]=['CVICU','ICU','PCU','TELE'];
 const flags:{value:ComplexityFlag;label:string}[]=[
-  {value:'Possible DC',label:'Possible DC'}, {value:'Expected DC',label:'Expected DC'}, {value:'Fresh Post-Op',label:'Fresh Post Op'},
+  {value:'Possible DC',label:'Possible DC'}, {value:'Expected DC',label:'Expected DC'}, {value:'Fresh Post-Op',label:'Fresh Post Op'}, {value:'Pending Surgery',label:'Pending Surgery'},
   {value:'Transfer',label:'Pending Transfer'}, {value:'Admission',label:'Recent Admission'}, {value:'BLOCKED',label:'BLOCKED'},
   {value:'Vent',label:'Vent'}, {value:'Vasoactive Support',label:'Vasoactive Support'}, {value:'Inotropic Support',label:'Inotropic Support'}, {value:'Impella/IABP',label:'Impella/IABP'}, {value:'HD/Dialysis',label:'HD/Dialysis'},
   {value:'Isolation',label:'Isolation'}, {value:'Sitter/Safety',label:'Sitter/Safety'}, {value:'High Fall Risk',label:'High Fall Risk'}, {value:'Confused',label:'Confused'}
