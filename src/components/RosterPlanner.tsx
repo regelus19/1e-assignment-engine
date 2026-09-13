@@ -10,12 +10,21 @@ interface Props {
   onMtStateChange: (state: MTCoverageState) => void;
   onPctStateChange: (state: PCTCoverageState) => void;
   onCall: OnCallProviders;
+  pmOnCall: OnCallProviders;
   onOnCallChange: (onCall: OnCallProviders) => void;
+  onPmOnCallChange: (onCall: OnCallProviders) => void;
 }
 
 const firstName = (name: string) => name.trim().split(/\s+/)[0] || '';
+const onCallFields = ([
+  ['intensivist','Intensivist'],
+  ['cardiothoracic','Cardiothoracic'],
+  ['acuteMI','Acute MI'],
+  ['cardiology','Cardiology'],
+  ['hospitalist','Hospitalist']
+] as const);
 
-export const RosterPlanner: React.FC<Props> = ({ roster, mtState, pctState, onRosterChange, onMtStateChange, onPctStateChange, onCall, onOnCallChange }) => {
+export const RosterPlanner: React.FC<Props> = ({ roster, mtState, pctState, onRosterChange, onMtStateChange, onPctStateChange, onCall, pmOnCall, onOnCallChange, onPmOnCallChange }) => {
   const update = (id: string, patch: Partial<NurseStaff>) => {
     onRosterChange(roster.map(s => s.id === id ? { ...s, ...patch } : s));
   };
@@ -33,14 +42,6 @@ export const RosterPlanner: React.FC<Props> = ({ roster, mtState, pctState, onRo
   };
 
   const removeStaff = (id: string) => onRosterChange(roster.filter(s => s.id !== id));
-
-  const onCallFields = ([
-    ['intensivist','Intensivist'],
-    ['cardiothoracic','Cardiothoracic'],
-    ['acuteMI','Acute MI'],
-    ['cardiology','Cardiology'],
-    ['hospitalist','Hospitalist']
-  ] as const);
 
   return (
     <div className="space-y-5">
@@ -103,21 +104,20 @@ export const RosterPlanner: React.FC<Props> = ({ roster, mtState, pctState, onRo
       <div className="bg-white rounded-xl border border-slate-200 p-4">
         <div className="mb-3">
           <h3 className="font-black text-sm uppercase tracking-wide">Next Shift On-Call Providers</h3>
-          <p className="text-xs text-slate-500 mt-1">Enter the coverage for this planned shift. Use a new line when two providers need to appear in the same specialty box.</p>
+          <p className="text-xs text-slate-500 mt-1">Fill both AM and PM coverage for the planned calendar day. This lets night shift complete the next day's full on-call board before morning handoff. Use separate lines when more than one provider shares coverage.</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-          {onCallFields.map(([key,label]) => (
-            <div key={key}>
-              <label className="text-[10px] font-black uppercase text-slate-500 block mb-1">{label}</label>
-              <textarea
-                rows={key === 'cardiothoracic' || key === 'hospitalist' ? 3 : 2}
-                value={onCall[key]}
-                onChange={e => onOnCallChange({ ...onCall, [key]: e.target.value })}
-                placeholder={key === 'cardiothoracic' || key === 'hospitalist' ? 'Provider 1\nProvider 2' : 'Provider / coverage'}
-                className="w-full border rounded px-2 py-1.5 text-xs resize-y"
-              />
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse table-fixed">
+            <colgroup><col className="w-[24%]"/><col className="w-[38%]"/><col className="w-[38%]"/></colgroup>
+            <thead><tr className="bg-slate-50"><th className="border p-2 text-left">Service</th><th className="border p-2 text-center font-black">AM Coverage</th><th className="border p-2 text-center font-black">PM Coverage</th></tr></thead>
+            <tbody>{onCallFields.map(([key,label]) => (
+              <tr key={key}>
+                <td className="border p-2 font-black uppercase text-slate-600">{label}</td>
+                <td className="border p-2"><textarea rows={key==='cardiothoracic'||key==='hospitalist'?3:2} value={onCall[key]} onChange={e => onOnCallChange({ ...onCall, [key]: e.target.value })} className="w-full border rounded px-2 py-1.5 text-xs resize-y" placeholder="AM provider(s) / coverage" /></td>
+                <td className="border p-2"><textarea rows={key==='cardiothoracic'||key==='hospitalist'?3:2} value={pmOnCall[key]} onChange={e => onPmOnCallChange({ ...pmOnCall, [key]: e.target.value })} className="w-full border rounded px-2 py-1.5 text-xs resize-y" placeholder="PM provider(s) / coverage" /></td>
+              </tr>
+            ))}</tbody>
+          </table>
         </div>
       </div>
     </div>
