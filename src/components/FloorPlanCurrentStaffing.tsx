@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Activity, AlertTriangle, Ban, Brain, CircleDot, Droplets, HeartPulse, House, LogIn, LogOut, MoveRight, RotateCcw, ShieldAlert, Users, Wind, X } from 'lucide-react';
+import { Activity, AlertTriangle, Ban, Brain, CircleDot, Droplets, HeartPulse, Home, LogIn, LogOut, MoveRight, RotateCcw, ShieldAlert, Users, Wind, X } from 'lucide-react';
 import floorPlanImage from '../assets/1e-floorplan.png';
 import { AcuityLevel, ComplexityFlag, CurrentShiftState, NurseStaff, PatientRoom, StaffStatus } from '../types';
 import { RapidRoomTools } from './RapidRoomTools';
@@ -27,8 +27,8 @@ const FLAGS: { flag: ComplexityFlag; label: string; icon: React.ReactNode }[] = 
   { flag: 'Sitter/Safety', label: 'Sitter/Safety', icon: <Users className="w-3.5 h-3.5" /> }, { flag: 'High Fall Risk', label: 'High Fall Risk', icon: <AlertTriangle className="w-3.5 h-3.5" /> },
   { flag: 'Confused', label: 'Confused', icon: <Brain className="w-3.5 h-3.5" /> }, { flag: 'Admission', label: 'Recent Admission', icon: <LogIn className="w-3.5 h-3.5" /> },
   { flag: 'Transfer', label: 'Pending Transfer', icon: <MoveRight className="w-3.5 h-3.5" /> },
-  { flag: 'Possible DC', label: 'Possible DC', icon: <House className="w-3.5 h-3.5 text-amber-500" /> },
-  { flag: 'Expected DC', label: 'Expected DC', icon: <House className="w-3.5 h-3.5 text-emerald-600" /> },
+  { flag: 'Possible DC', label: 'Possible DC', icon: <Home className="w-3.5 h-3.5 text-amber-500" /> },
+  { flag: 'Expected DC', label: 'Expected DC', icon: <Home className="w-3.5 h-3.5 text-emerald-600" /> },
   { flag: 'BLOCKED', label: 'BLOCKED', icon: <Ban className="w-3.5 h-3.5" /> },
   { flag: 'Discharge', label: 'Discharge', icon: <LogOut className="w-3.5 h-3.5" /> },
 ];
@@ -42,9 +42,9 @@ const pairLabel = (staff: NurseStaff, roster: NurseStaff[]) => {
 const isBedsideRole = (staff: NurseStaff) => ['RN', 'CHG', 'Preceptor'].includes(staff.role);
 const canReceivePatients = (staff: NurseStaff) => isBedsideRole(staff) && ['ACTIVE', 'RECALLED'].includes(staff.staffStatus);
 const dischargeHouse = (room: PatientRoom, size='w-3 h-3') => room.flags.includes('Expected DC')
-  ? <House aria-label="Expected discharge" title="Expected DC" className={`${size} inline-block text-emerald-600 fill-emerald-100`} />
+  ? <Home aria-label="Expected discharge" title="Expected DC" className={`${size} inline-block text-emerald-600 fill-emerald-100`} />
   : room.flags.includes('Possible DC')
-    ? <House aria-label="Possible discharge" title="Possible DC" className={`${size} inline-block text-amber-500 fill-amber-100`} />
+    ? <Home aria-label="Possible discharge" title="Possible DC" className={`${size} inline-block text-amber-500 fill-amber-100`} />
     : null;
 
 export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoomChange, onAssignRoom, onRecallPrevious }) => {
