@@ -60,3 +60,5 @@ A GitHub Pages workflow is included at `.github/workflows/deploy-pages.yml`. Ver
 - Geography is an optimization criterion after capability and safe workload.
 - Charge RN patient assignment and TELE quad are exception decisions, not silent defaults.
 - MRS target is 11.972 and remains advisory. Current color thresholds are provisional until validated rules are supplied.
+
+<!-- deployment refresh: restored actual 1E floor-plan geometry -->
