@@ -27,6 +27,7 @@ const FLAGS: { flag: ComplexityFlag; label: string; icon: React.ReactNode }[] = 
   { flag: 'Impella/IABP', label: 'Impella/IABP', icon: <HeartPulse className="w-3.5 h-3.5" /> },
   { flag: 'Fresh Post-Op', label: 'Fresh Post Op', icon: <CircleDot className="w-3.5 h-3.5" /> },
   { flag: 'Pending Surgery', label: 'Pending Surgery', icon: <CircleDot className="w-3.5 h-3.5" /> },
+  { flag: 'Pending Procedure', label: 'Pending Procedure', icon: <CircleDot className="w-3.5 h-3.5" /> },
   { flag: 'HD/Dialysis', label: 'HD/Dialysis', icon: <Droplets className="w-3.5 h-3.5" /> }, { flag: 'Isolation', label: 'Isolation', icon: <ShieldAlert className="w-3.5 h-3.5" /> },
   { flag: 'Sitter/Safety', label: 'Sitter/Safety', icon: <Users className="w-3.5 h-3.5" /> }, { flag: 'High Fall Risk', label: 'High Fall Risk', icon: <AlertTriangle className="w-3.5 h-3.5" /> },
   { flag: 'Confused', label: 'Confused', icon: <Brain className="w-3.5 h-3.5" /> }, { flag: 'Admission', label: 'Recent Admission', icon: <LogIn className="w-3.5 h-3.5" /> },
@@ -61,6 +62,7 @@ const roomFlagIcons = (room: PatientRoom) => {
   if (room.flags.includes('Impella/IABP')) items.push({ key:'mcs', label:'Impella/IABP', node:<HeartPulse className="w-2.5 h-2.5 text-purple-700"/> });
   if (room.flags.includes('Fresh Post-Op')) items.push({ key:'postop', label:'Fresh Post Op', node:<CircleDot className="w-2.5 h-2.5 text-orange-700"/> });
   if (room.flags.includes('Pending Surgery')) items.push({ key:'surgery', label:'Pending Surgery', node:<CircleDot className="w-2.5 h-2.5 text-red-700"/> });
+  if (room.flags.includes('Pending Procedure')) items.push({ key:'procedure', label:'Pending Procedure', node:<CircleDot className="w-2.5 h-2.5 text-blue-700"/> });
   if (room.flags.includes('HD/Dialysis')) items.push({ key:'hd', label:'HD/Dialysis', node:<Droplets className="w-2.5 h-2.5 text-cyan-700"/> });
   if (room.flags.includes('Isolation')) items.push({ key:'iso', label:'Isolation', node:<ShieldAlert className="w-2.5 h-2.5 text-amber-700"/> });
   if (room.flags.includes('Sitter/Safety')) items.push({ key:'sitter', label:'Sitter/Safety', node:<Users className="w-2.5 h-2.5 text-indigo-700"/> });
