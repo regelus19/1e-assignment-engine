@@ -4,7 +4,7 @@ export type StaffStatus = 'ACTIVE' | 'FLEXED' | 'ON_CALL' | 'RECALLED';
 export type MTCoverageState = 'MT_PRESENT' | 'RN_COVERING_MT' | 'MT_UNFILLED';
 export type PCTCoverageState = 'PCT_PRESENT' | 'PCT_NONE';
 export type AcuityLevel = 'CVICU' | 'ICU' | 'PCU' | 'TELE';
-export type ComplexityFlag = 'Vent' | 'Pressors' | 'Impella/IABP' | 'Fresh Post-Op' | 'HD/Dialysis' | 'Isolation' | 'Sitter/Safety' | 'High Fall Risk' | 'Confused' | 'Admission' | 'Transfer' | 'Possible DC' | 'Expected DC' | 'BLOCKED' | 'Discharge';
+export type ComplexityFlag = 'Vent' | 'Pressors' | 'Vasoactive Support' | 'Inotropic Support' | 'Impella/IABP' | 'Fresh Post-Op' | 'HD/Dialysis' | 'Isolation' | 'Sitter/Safety' | 'High Fall Risk' | 'Confused' | 'Admission' | 'Transfer' | 'Possible DC' | 'Expected DC' | 'BLOCKED' | 'Discharge';
 export interface RoomMetadata { roomNumber: string; hall: 'A' | 'B' | 'C'; zone: 'Upper' | 'Mid' | 'Lower'; isICUCapable: boolean; isSafetyPreferred: boolean; proximityGroups: string[]; adjacentRooms: string[]; }
 export interface PatientRoom { roomNumber: string; isOccupied: boolean; patientStayId: string; acuity: AcuityLevel; acuityConfirmed?: boolean; flags: ComplexityFlag[]; assignedNurseId: string | null; }
 export interface NurseStaff { id: string; name: string; role: StaffRole; assignedPhone: string; capability: CapabilityLevel; staffStatus: StaffStatus; plannedReturnTime?: string; actualRecallTime?: string; coveringMT?: boolean; orientationPartnerId?: string; }
