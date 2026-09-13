@@ -1,6 +1,5 @@
 import { NurseStaff, PatientRoom, RecommendationResult, AssignmentWarning, NurseRecommendationDetail } from '../types';
 import { ROOM_METADATA_MAP, evaluateGeographicCluster } from '../config/geography';
-import { StorageService } from './storage';
 
 export type RecommendationStrategy = 'BALANCED' | 'CONSERVE_SKILL_MIX' | 'CAPACITY_EXCEPTION';
 
@@ -95,9 +94,6 @@ export function runRecommendationEngine(
   const allowQuad = allowTeleQuad;
   const fixedNurseIds = new Set(Object.values(fixedAssignments));
 
-  // In Semi-Auto, a nurse who has any CN-set room is treated as a completed manual load.
-  // The engine may not add another patient to that nurse. This makes the Live Assignment Board
-  // an exact instruction for those nurses, not merely an anchor that Auto Generate can build on.
   const nurses = staff.filter(s => ['ACTIVE', 'RECALLED'].includes(s.staffStatus) && bedside(s) && (s.role !== 'CHG' || allowCharge || fixedNurseIds.has(s.id)));
   const state: Record<string, { nurse: NurseStaff; assignedRooms: PatientRoom[]; reasons: string[] }> = {};
   nurses.forEach(n => state[n.id] = { nurse: n, assignedRooms: [], reasons: [] });
@@ -110,7 +106,7 @@ export function runRecommendationEngine(
     if (r.flags.some(f => ['High Fall Risk', 'Confused', 'Sitter/Safety'].includes(f)) && !['109', '119'].includes(r.roomNumber)) warnings.push({ type: 'SAFETY_ROOM', severity: 'INFO', roomNumber: r.roomNumber, message: `Room ${r.roomNumber} has safety flags; 109/119 preferred.` });
   });
 
-  // Seed CN-set assignments first. They and the nurses' manual loads are protected from Auto Fill.
+  // Semi-Auto: rooms pre-assigned by the CN are authoritative and preserved exactly.
   for (const room of occupied) {
     const nurseId = fixedAssignments[room.roomNumber];
     if (!nurseId) continue;
@@ -126,14 +122,6 @@ export function runRecommendationEngine(
 
     if (!isClinicallyQualified(nurse, room)) {
       warnings.push({ type: 'CAPABILITY', severity: 'HIGH', roomNumber: room.roomNumber, nurseName: nurse.name, message: `CN override warning: ${nurse.name} is manually assigned to room ${room.roomNumber} (${room.acuity}) but the nurse capability profile is ${nurse.capability}. Verify before applying.` });
-    }
-
-    const continuity = StorageService.findContinuity(room.patientStayId, staff);
-    if (continuity && continuity.nurseId !== nurse.id) {
-      warnings.push({
-        type: 'CONTINUITY', severity: 'INFO', roomNumber: room.roomNumber, nurseName: nurse.name,
-        message: `Continuity override: room ${room.roomNumber} was previously assigned to ${continuity.nurseName}, but the Charge Nurse fixed it to ${nurse.name}. Semi-Auto will respect the CN assignment.`,
-      });
     }
   }
 
@@ -156,14 +144,11 @@ export function runRecommendationEngine(
     .sort((a, b) => rank[b.acuity] - rank[a.acuity]);
 
   for (const room of sorted) {
-    const continuity = StorageService.findContinuity(room.patientStayId, nurses);
     let best: string | null = null;
     let score = -9999;
     let reasons: string[] = [];
 
     for (const n of nurses) {
-      // Any nurse represented on the Live Assignment Board in Semi-Auto is load-locked.
-      // Preserve exactly what the CN entered and distribute the rest to other nurses.
       if (fixedNurseIds.has(n.id)) continue;
       if (n.role === 'CHG' && !allowCharge) continue;
       const assigned = state[n.id].assignedRooms;
@@ -173,11 +158,8 @@ export function runRecommendationEngine(
       const candidateReasons = [`✓ ${n.capability} qualified`];
       const assignedICU = assigned.filter(x => x.acuity === 'ICU').length;
 
-      if (continuity?.nurseId === n.id) {
-        const recencyBonus = Math.max(0, 40 - ((continuity.daysAgo - 1) * 8));
-        candidate += 180 + recencyBonus;
-        candidateReasons.push(`✓ STRONG CONTINUITY — previous assignment (${continuity.daysAgo === 1 ? 'most recent finalized shift' : `${continuity.daysAgo} shifts back`})`);
-      }
+      // Automatic recommendations intentionally ignore previous-shift continuity.
+      // If continuity matters for a patient, the CN pre-assigns that room in Semi-Auto mode.
       if (assigned.length) {
         const geo = evaluateGeographicCluster([...assigned.map(x => x.roomNumber), room.roomNumber]);
         candidate += geo.score * 40;
