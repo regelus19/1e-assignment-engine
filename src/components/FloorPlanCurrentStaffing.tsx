@@ -42,9 +42,9 @@ const pairLabel = (staff: NurseStaff, roster: NurseStaff[]) => {
 const isBedsideRole = (staff: NurseStaff) => ['RN', 'CHG', 'Preceptor'].includes(staff.role);
 const canReceivePatients = (staff: NurseStaff) => isBedsideRole(staff) && ['ACTIVE', 'RECALLED'].includes(staff.staffStatus);
 const dischargeHouse = (room: PatientRoom, size='w-3 h-3') => room.flags.includes('Expected DC')
-  ? <Home aria-label="Expected discharge" title="Expected DC" className={`${size} inline-block text-emerald-600 fill-emerald-100`} />
+  ? <Home aria-label="Expected discharge" className={`${size} inline-block text-emerald-600 fill-emerald-100`} />
   : room.flags.includes('Possible DC')
-    ? <Home aria-label="Possible discharge" title="Possible DC" className={`${size} inline-block text-amber-500 fill-amber-100`} />
+    ? <Home aria-label="Possible discharge" className={`${size} inline-block text-amber-500 fill-amber-100`} />
     : null;
 
 export const FloorPlanCurrentStaffing: React.FC<Props> = ({ currentShift, onRoomChange, onAssignRoom, onRecallPrevious }) => {
