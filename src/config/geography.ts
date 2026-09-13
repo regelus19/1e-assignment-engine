@@ -4,9 +4,18 @@ export const PROXIMITY_GROUPS = {
   GROUP_A: ['101', '102', '103', '104', '105', '106'],
   GROUP_B: ['107', '108', '109', '110', '111', '112', '113'],
   GROUP_C: ['114', '115', '116', '117', '118', '119', '120', '121', '122'],
+
+  // Human-like compact working zones derived from unit practice.
+  // These are intentionally stronger than generic hall membership.
+  GROUP_A_B_BRIDGE_COMPACT: ['103', '104', '105', '106', '109', '110', '111'],
+  GROUP_B_C_UPPER_COMPACT: ['110', '111', '112', '113', '114', '115', '116'],
+  GROUP_C_UPPER_MID: ['114', '115', '116', '117', '118', '119'],
+  GROUP_C_LOWER: ['118', '119', '120', '121', '122'],
+
   // Preferred cross-hall working zone identified by unit workflow:
-  // any combination of Hall B 107-110 with Hall C 117-122 is considered a strong cluster.
+  // combinations of Hall B 107-110 with Hall C 117-122 can be workable.
   GROUP_BC_PREFERRED: ['107', '108', '109', '110', '117', '118', '119', '120', '121', '122'],
+
   // Secondary cross-hall working zone. Doable, but not a first-priority cluster.
   GROUP_BC_SECONDARY: ['110', '111', '112', '113', '114', '115', '116', '117'],
   GROUP_AB_BRIDGE: ['103', '104', '109', '110', '111'],
@@ -42,6 +51,8 @@ export const ROOM_METADATA_MAP: Record<string, RoomMetadata> = {
   '122': { roomNumber: '122', hall: 'C', zone: 'Lower', isICUCapable: true, isSafetyPreferred: false, proximityGroups: ['GROUP_C', 'GROUP_BC_PREFERRED'], adjacentRooms: ['113', '121'] },
 };
 
+const allIn = (rooms: string[], group: string[]) => rooms.every(r => group.includes(r));
+
 export function evaluateGeographicCluster(rooms: string[]): { score: number; label: string; reason: string; advisory?: string } {
   if (rooms.length <= 1) {
     return { score: 1.0, label: 'Single room', reason: 'Single room assigned' };
@@ -55,29 +66,65 @@ export function evaluateGeographicCluster(rooms: string[]): { score: number; lab
   const metas = rooms.map(r => ROOM_METADATA_MAP[r]).filter(Boolean);
   const halls = new Set(metas.map(m => m.hall));
 
-  // Same-hall assignments remain excellent when all rooms stay together.
+  // HARD HUMAN-FACTOR GUARDRAILS.
+  // Hall A + Hall C without a Hall B bridge is a long split and should almost never be auto-generated.
+  // Example: 104 + 119 + 120. The CN can still create it manually in Semi-Auto if operationally required.
+  if (halls.has('A') && halls.has('C') && !halls.has('B')) {
+    return {
+      score: -5.5,
+      label: 'Very poor split',
+      reason: 'Hall A-to-Hall C assignment without a Hall B bridge',
+      advisory: '⚠ A↔C SPLIT — AVOID IN AUTO ASSIGNMENT; CN OVERRIDE ONLY'
+    };
+  }
+
+  // Spanning all three halls is also strongly disfavored. Example: 106 + 109 + 121.
+  if (halls.size === 3) {
+    return {
+      score: -4.5,
+      label: 'Very poor split',
+      reason: 'Assignment spans Halls A, B, and C',
+      advisory: '⚠ THREE-HALL ASSIGNMENT — AVOID WHEN ANY COMPACT ALTERNATIVE EXISTS'
+    };
+  }
+
+  // Compact human-like clusters get the highest preference.
+  if (allIn(rooms, PROXIMITY_GROUPS.GROUP_A_B_BRIDGE_COMPACT) && halls.has('A') && halls.has('B')) {
+    return { score: 1.0, label: 'Excellent operational cluster', reason: 'Compact Hall A/B bridge cluster' };
+  }
+  if (allIn(rooms, PROXIMITY_GROUPS.GROUP_B_C_UPPER_COMPACT) && halls.has('B') && halls.has('C')) {
+    return { score: 1.0, label: 'Excellent operational cluster', reason: 'Compact Hall B/C upper cluster' };
+  }
+  if (allIn(rooms, PROXIMITY_GROUPS.GROUP_C_UPPER_MID)) {
+    return { score: 1.0, label: 'Excellent operational cluster', reason: 'Compact Hall C upper/mid cluster' };
+  }
+  if (allIn(rooms, PROXIMITY_GROUPS.GROUP_C_LOWER)) {
+    return { score: 1.0, label: 'Excellent operational cluster', reason: 'Compact Hall C lower cluster' };
+  }
+
+  // Same-hall assignments remain highly preferred.
   if (halls.size === 1) {
-    return { score: 0.97, label: 'Excellent cluster', reason: `Rooms within Hall ${Array.from(halls)[0]}` };
+    return { score: 0.94, label: 'Very good cluster', reason: `Rooms remain within Hall ${Array.from(halls)[0]}` };
   }
 
   // First-priority Hall B/C cross-hall zone: 107-110 combined with 117-122.
-  // Examples include 107/108/120 or 109/118/117.
-  if (rooms.every(r => PROXIMITY_GROUPS.GROUP_BC_PREFERRED.includes(r)) && halls.has('B') && halls.has('C')) {
-    return { score: 0.94, label: 'Very good cross-hall cluster', reason: 'Preferred Hall B/C cross-hall zone (107-110 with 117-122)' };
+  // Unit workflow has identified combinations such as 107/108/120 or 109/118/117 as workable.
+  if (allIn(rooms, PROXIMITY_GROUPS.GROUP_BC_PREFERRED) && halls.has('B') && halls.has('C')) {
+    return { score: 0.90, label: 'Good cross-hall cluster', reason: 'Preferred Hall B/C cross-hall zone (107-110 with 117-122)' };
   }
 
   // Secondary Hall B/C zone: 110-117. Operationally workable but lower priority.
-  if (rooms.every(r => PROXIMITY_GROUPS.GROUP_BC_SECONDARY.includes(r)) && halls.has('B') && halls.has('C')) {
-    return { score: 0.82, label: 'Acceptable cross-hall cluster', reason: 'Secondary Hall B/C working zone (110-117)' };
+  if (allIn(rooms, PROXIMITY_GROUPS.GROUP_BC_SECONDARY) && halls.has('B') && halls.has('C')) {
+    return { score: 0.78, label: 'Acceptable cross-hall cluster', reason: 'Secondary Hall B/C working zone (110-117)' };
   }
 
   // A/B bridge-supported cross-hall cluster.
   if (rooms.some(r => PROXIMITY_GROUPS.GROUP_AB_BRIDGE.includes(r)) && halls.has('A') && halls.has('B')) {
-    return { score: 0.85, label: 'Very good cluster', reason: 'Cluster supported by AB Bridge' };
+    return { score: 0.82, label: 'Good cluster', reason: 'Assignment uses the A/B bridge zone' };
   }
 
   return {
-    score: 0.35,
+    score: -1.5,
     label: 'Split geography',
     reason: 'Rooms span disconnected halls/zones',
     advisory: '⚠ SPLIT GEOGRAPHIC ASSIGNMENT — CHARGE NURSE REVIEW'
