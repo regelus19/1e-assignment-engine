@@ -1,0 +1,24 @@
+name: Validate repository boundary
+
+on:
+  push:
+    branches:
+      - validation/repository-boundary-ci
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install
+      - name: Build
+        run: npm run build
+      - name: Geography checks
+        run: npm run check:geo
+      - name: Engine checks
+        run: npm run check:engine
