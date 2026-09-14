@@ -52,8 +52,8 @@ export interface OperationalRepository {
 
   loadOperationalEvents(
     unitId: string,
-    date: string,
-    shiftType: ShiftType
+    date?: string,
+    shiftType?: ShiftType
   ): Promise<RepositoryResult<OperationalEvent[]>>;
 
   appendOperationalEvent(
