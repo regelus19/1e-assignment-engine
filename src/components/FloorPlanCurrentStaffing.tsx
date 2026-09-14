@@ -16,6 +16,8 @@ interface Props {
   quickMode?: boolean;
   lockedNurseIds?: string[];
   onToggleLock?: (nurseId: string) => void;
+  /** Rendered in the Operations tab on phones; shown by the parent on desktop. */
+  actions?: React.ReactNode;
 }
 
 /*
@@ -123,7 +125,7 @@ const roomFlagIcons = (r: PatientRoom) => {
 };
 
 export const FloorPlanCurrentStaffing: React.FC<Props> = ({
-  currentShift, onRoomChange, onAssignRoom, quickMode = false, lockedNurseIds = [], onToggleLock,
+  currentShift, onRoomChange, onAssignRoom, quickMode = false, lockedNurseIds = [], onToggleLock, actions,
 }) => {
   const [selectedRoomNumber, setSelectedRoomNumber] = useState(
     () => currentShift.rooms.find(r => r.isOccupied)?.roomNumber || '101',
@@ -132,6 +134,13 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
   const [tool, setTool] = useState<Tool>(null);
   const [showAllFlags, setShowAllFlags] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [mobileTab, setMobileTab] = useState<'roster' | 'map' | 'ops'>('map');
+  const [isNarrow, setIsNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024);
+  React.useEffect(() => {
+    const onResize = () => setIsNarrow(window.innerWidth < 1024);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const occupied = currentShift.rooms.filter(r => r.isOccupied);
   const unassigned = occupied.filter(r => !r.assignedNurseId);
@@ -174,12 +183,22 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
     onRoomChange(withFlagToggled(room, tool.value));
   };
 
+  /*
+   * One tap, three meanings, decided by the mode you are already in:
+   *   a coding tool is selected -> apply it
+   *   a nurse is selected       -> assign or unassign that room
+   *   neither                   -> open the room. This is the default,
+   *                                because "I tapped a room and nothing
+   *                                happened" is the worst possible answer.
+   */
   const roomClick = (room: PatientRoom) => {
     setSelectedRoomNumber(room.roomNumber);
     if (tool) { applyTool(room); return; }
     if (manualStaffId && room.isOccupied) {
       onAssignRoom(room.roomNumber, room.assignedNurseId === manualStaffId ? null : manualStaffId);
+      return;
     }
+    setDetailOpen(true);
   };
 
   const clearStaff = (id: string) => roomsFor(id).forEach(r => onAssignRoom(r.roomNumber, null));
@@ -196,10 +215,7 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
       : tool.kind === 'status' ? `Tap rooms to mark ${tool.value === 'OCCUPIED' ? 'occupied' : 'vacant'}`
         : `Tap rooms to toggle ${FLAGS.find(f => f.flag === tool.value)?.label}`;
 
-  return (
-    <div className={`grid grid-cols-1 ${quickMode ? 'xl:grid-cols-[270px_minmax(0,1fr)]' : '2xl:grid-cols-[270px_minmax(0,1fr)]'} gap-2 items-start relative`}>
-
-      {/* ------------------------------------------------ NURSE RAIL */}
+  const nurseRail = (
       <aside className="bg-white border-2 border-slate-300 rounded-xl overflow-hidden">
         <div className="px-3 py-2 bg-slate-900 text-white flex justify-between gap-2">
           <div>
@@ -257,10 +273,10 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
           })}
         </div>
       </aside>
+  );
 
-      {/* ------------------------------------------------ MAP COLUMN */}
+  const mapColumn = (
       <section className="min-w-0 space-y-1.5">
-
         {/* Rapid coding strip — available on every board, not just planning. */}
         <div className="bg-white border rounded-xl px-2 py-1.5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -366,8 +382,7 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
                   <button
                     key={room.roomNumber}
                     onClick={() => roomClick(room)}
-                    onDoubleClick={() => { setSelectedRoomNumber(room.roomNumber); setDetailOpen(true); }}
-                    className={`absolute -translate-x-1/2 -translate-y-1/2 w-[8.5%] min-w-[62px] rounded-md border-2 shadow-md px-1 py-1.5 ${style} ${isSelected ? 'ring-4 ring-slate-900/20 z-20' : 'z-10'} ${needsRn ? 'outline outline-2 outline-rose-500/80' : ''} ${belongsToSelection ? 'ring-4 ring-indigo-500/70' : ''}`}
+                                        className={`absolute -translate-x-1/2 -translate-y-1/2 w-[8.5%] min-w-[62px] rounded-md border-2 shadow-md px-1 py-1.5 ${style} ${isSelected ? 'ring-4 ring-slate-900/20 z-20' : 'z-10'} ${needsRn ? 'outline outline-2 outline-rose-500/80' : ''} ${belongsToSelection ? 'ring-4 ring-indigo-500/70' : ''}`}
                     style={{ left: `${pos.left}%`, top: `${pos.top}%` }}
                   >
                     <div className="font-black text-base leading-none">
@@ -389,21 +404,25 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
           </div>
 
           <div className="px-3 py-1 border-t text-[10px] text-slate-500 flex justify-between">
-            <span>Double-tap a room for full detail. Room positions come from the 1 East architectural floor plan.</span>
+            <span>Tap a room to open it. Select a nurse first to assign instead. Positions come from the 1 East floor plan.</span>
             <button onClick={() => setDetailOpen(true)} className="font-bold text-slate-700 underline">Open room {selectedRoom?.roomNumber}</button>
           </div>
         </div>
       </section>
+  );
 
-      {/* ------------------------------------------------ ROOM DETAIL (exception path only) */}
-      {detailOpen && selectedRoom && (
+  /* Room detail is a real screen, not a hidden gesture. Full-bleed on a
+     phone, a side panel on a desktop. */
+  const roomDetail = detailOpen && selectedRoom && (
         <>
-          <div className="fixed inset-0 bg-slate-900/20 z-40" onClick={() => setDetailOpen(false)} />
-          <aside className="fixed right-3 top-3 bottom-3 w-[330px] bg-white border-2 border-slate-300 rounded-xl p-4 z-50 overflow-y-auto shadow-2xl">
+          <div className="fixed inset-0 bg-slate-900/30 z-40" onClick={() => setDetailOpen(false)} />
+          <aside className={isNarrow
+            ? 'fixed inset-0 bg-white z-50 overflow-y-auto p-4'
+            : 'fixed right-3 top-3 bottom-3 w-[330px] bg-white border-2 border-slate-300 rounded-xl p-4 z-50 overflow-y-auto shadow-2xl'}>
             <div className="flex justify-between items-start border-b pb-3">
               <div>
                 <div className="text-2xl font-black">Room {selectedRoom.roomNumber}{dischargeHouse(selectedRoom, 'w-4 h-4')}</div>
-                <div className="text-xs text-slate-500">Exception editing — not the normal path</div>
+                <div className="text-xs text-slate-500">{selectedRoom.isOccupied ? 'Occupied' : 'Vacant'} · tap Done when finished</div>
               </div>
               <button onClick={() => setDetailOpen(false)} className="border rounded p-1"><X className="w-4 h-4" /></button>
             </div>
@@ -454,9 +473,51 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
                 ))}
               </div>
             </div>
+            <button onClick={() => setDetailOpen(false)}
+              className="w-full mt-5 bg-blue-600 text-white rounded-lg py-3 font-black text-sm">Done</button>
           </aside>
         </>
-      )}
+  );
+
+  /* ---------------- PHONE: three tabs, because a nurse rail and a floor
+     plan cannot share a 390px screen. Same actions, same data, same rules. */
+  if (isNarrow) {
+    const tabs: { id: typeof mobileTab; label: string; badge?: number }[] = [
+      { id: 'roster', label: 'Roster' },
+      { id: 'map', label: 'Unit Map', badge: unassigned.length || undefined },
+      { id: 'ops', label: 'Operations' },
+    ];
+    return (
+      <div className="relative">
+        <div className="grid grid-cols-3 gap-1 bg-slate-200 p-1 rounded-xl sticky top-0 z-30">
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setMobileTab(t.id)}
+              className={`rounded-lg py-2.5 text-xs font-black flex items-center justify-center gap-1.5 ${mobileTab === t.id ? 'bg-blue-600 text-white shadow' : 'text-slate-600'}`}>
+              {t.label}
+              {t.badge ? <span className="bg-rose-500 text-white rounded-full px-1.5 text-[10px] leading-4">{t.badge}</span> : null}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2">
+          {mobileTab === 'roster' && nurseRail}
+          {mobileTab === 'map' && mapColumn}
+          {mobileTab === 'ops' && (
+            <div className="bg-white border-2 border-slate-300 rounded-xl p-3">
+              {actions || <p className="text-sm text-slate-500">No actions available on this screen.</p>}
+            </div>
+          )}
+        </div>
+        {roomDetail}
+      </div>
+    );
+  }
+
+  /* ---------------- DESKTOP: unchanged side-by-side workspace. */
+  return (
+    <div className={`grid grid-cols-1 ${quickMode ? 'xl:grid-cols-[270px_minmax(0,1fr)]' : '2xl:grid-cols-[270px_minmax(0,1fr)]'} gap-2 items-start relative`}>
+      {nurseRail}
+      {mapColumn}
+      {roomDetail}
     </div>
   );
 };
