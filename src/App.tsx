@@ -12,10 +12,7 @@ import { HistoryView } from './components/HistoryView';
 import { CalendarDays, Clock3, Download, History, Printer, RotateCcw, Settings2 } from 'lucide-react';
 
 const tomorrowIso=()=>{const d=new Date();d.setDate(d.getDate()+1);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
-const CURRENT_MRS_KEY='1E_CURRENT_MRS_INPUT',PROJECTED_MRS_KEY='1E_PROJECTED_MRS_INPUT',PLAN_DATE_KEY='1E_PLAN_DATE',SHIFT_KEY='1E_SHIFT_TYPE',PLAN_SOURCE_KEY='1E_PLAN_SOURCE_SHIFT',PM_ONCALL_KEY='1E_NEXT_DAY_PM_ONCALL';
 type Tab='current'|'plan'|'forecast'|'history'|'print';
-const EMPTY_ONCALL:OnCallProviders={intensivist:'',cardiothoracic:'',acuteMI:'',cardiology:'',hospitalist:''};
-const loadPmOnCall=():OnCallProviders=>{try{const raw=localStorage.getItem(PM_ONCALL_KEY);return raw?{...EMPTY_ONCALL,...JSON.parse(raw)}:{...EMPTY_ONCALL};}catch{return {...EMPTY_ONCALL};}};
 
 const nextShiftIdentity=(current:CurrentShiftState)=>{
   if(current.shiftType==='Day') return {date:current.date,shiftType:'Night' as const};
@@ -24,9 +21,9 @@ const nextShiftIdentity=(current:CurrentShiftState)=>{
 };
 
 export const App:React.FC=()=>{
- const[activeTab,setActiveTab]=useState<Tab>('current'),[date,setDate]=useState(()=>localStorage.getItem(PLAN_DATE_KEY)||tomorrowIso()),[shiftType,setShiftType]=useState<'Day'|'Night'>(()=>(localStorage.getItem(SHIFT_KEY) as 'Day'|'Night')||'Day'),[mtState,setMtState]=useState<MTCoverageState>('MT_PRESENT'),[pctState,setPctState]=useState<PCTCoverageState>('PCT_PRESENT'),[roster,setRoster]=useState<NurseStaff[]>([]),[rooms,setRooms]=useState<PatientRoom[]>([]),[onCall,setOnCall]=useState<OnCallProviders>(StorageService.loadOnCall()),[pmOnCall,setPmOnCall]=useState<OnCallProviders>(loadPmOnCall),[forecastEvents,setForecastEvents]=useState<ForecastEvent[]>([]),[warnings,setWarnings]=useState<AssignmentWarning[]>([]),[fitScore]=useState(100),[currentMRS,setCurrentMRS]=useState(()=>Number(localStorage.getItem(CURRENT_MRS_KEY)||MRS_CONFIG.target)),[projectedMRS,setProjectedMRS]=useState(()=>Number(localStorage.getItem(PROJECTED_MRS_KEY)||MRS_CONFIG.target)),[currentShift,setCurrentShift]=useState<CurrentShiftState>(()=>StorageService.loadCurrentShift()),[events,setEvents]=useState<OperationalEvent[]>(()=>StorageService.loadOperationalEvents()),[planBaseline,setPlanBaseline]=useState<PlanBaseline|null>(()=>StorageService.loadPlanBaseline()),[history,setHistory]=useState<FinalizedShiftSnapshot[]>(()=>StorageService.loadHistory());
+ const[activeTab,setActiveTab]=useState<Tab>('current'),[date,setDate]=useState(()=>StorageService.loadPlanDate(tomorrowIso())),[shiftType,setShiftType]=useState<'Day'|'Night'>(()=>StorageService.loadShiftType()),[mtState,setMtState]=useState<MTCoverageState>(()=>StorageService.loadPlanMtState()),[pctState,setPctState]=useState<PCTCoverageState>(()=>StorageService.loadPlanPctState()),[roster,setRoster]=useState<NurseStaff[]>([]),[rooms,setRooms]=useState<PatientRoom[]>([]),[onCall,setOnCall]=useState<OnCallProviders>(StorageService.loadOnCall()),[pmOnCall,setPmOnCall]=useState<OnCallProviders>(()=>StorageService.loadPmOnCall()),[forecastEvents,setForecastEvents]=useState<ForecastEvent[]>([]),[warnings,setWarnings]=useState<AssignmentWarning[]>([]),[fitScore]=useState(100),[currentMRS,setCurrentMRS]=useState(()=>StorageService.loadCurrentMrs(MRS_CONFIG.target)),[projectedMRS,setProjectedMRS]=useState(()=>StorageService.loadProjectedMrs(MRS_CONFIG.target)),[currentShift,setCurrentShift]=useState<CurrentShiftState>(()=>StorageService.loadCurrentShift()),[events,setEvents]=useState<OperationalEvent[]>(()=>StorageService.loadOperationalEvents()),[planBaseline,setPlanBaseline]=useState<PlanBaseline|null>(()=>StorageService.loadPlanBaseline()),[history,setHistory]=useState<FinalizedShiftSnapshot[]>(()=>StorageService.loadHistory());
  useEffect(()=>{setRoster(StorageService.loadStaff());setRooms(StorageService.loadRooms());setForecastEvents(StorageService.loadForecast());const saved=StorageService.loadPlanBaseline();if(saved?.pmOnCall)setPmOnCall(saved.pmOnCall);},[]);
- useEffect(()=>{localStorage.setItem(PLAN_DATE_KEY,date)},[date]);useEffect(()=>{localStorage.setItem(SHIFT_KEY,shiftType)},[shiftType]);useEffect(()=>{localStorage.setItem(CURRENT_MRS_KEY,String(currentMRS))},[currentMRS]);useEffect(()=>{localStorage.setItem(PROJECTED_MRS_KEY,String(projectedMRS))},[projectedMRS]);useEffect(()=>{localStorage.setItem(PM_ONCALL_KEY,JSON.stringify(pmOnCall))},[pmOnCall]);
+ useEffect(()=>{StorageService.savePlanDate(date)},[date]);useEffect(()=>{StorageService.saveShiftType(shiftType)},[shiftType]);useEffect(()=>{StorageService.savePlanMtState(mtState)},[mtState]);useEffect(()=>{StorageService.savePlanPctState(pctState)},[pctState]);useEffect(()=>{StorageService.saveCurrentMrs(currentMRS)},[currentMRS]);useEffect(()=>{StorageService.saveProjectedMrs(projectedMRS)},[projectedMRS]);useEffect(()=>{StorageService.savePmOnCall(pmOnCall)},[pmOnCall]);
  const currentStatus=getMRSStatus(currentMRS),projectedStatus=getMRSStatus(projectedMRS),plannedCensus=rooms.filter(r=>r.isOccupied).length,currentCensus=currentShift.rooms.filter(r=>r.isOccupied).length,currentActiveRNs=currentShift.roster.filter(s=>['RN','Preceptor'].includes(s.role)&&['ACTIVE','RECALLED'].includes(s.staffStatus)).length;
  const supportRisk=useMemo(()=>{const a:string[]=[];if(currentShift.mtState==='MT_UNFILLED')a.push('MT unfilled');if(currentShift.mtState==='RN_COVERING_MT')a.push('RN covering MT');if(currentShift.pctState==='PCT_NONE')a.push('No PCT');return a},[currentShift.mtState,currentShift.pctState]);
  const saveRoster=(u:NurseStaff[])=>{setRoster(u);StorageService.saveStaff(u)};
@@ -36,16 +33,16 @@ export const App:React.FC=()=>{
  const openNextShiftPlan=()=>{
    const sourceKey=`${currentShift.date}|${currentShift.shiftType}`;
    const target=nextShiftIdentity(currentShift);
-   if(localStorage.getItem(PLAN_SOURCE_KEY)!==sourceKey){
+   if(StorageService.loadPlanSource()!==sourceKey){
      const seededRooms=currentShift.rooms.map(r=>({...r,assignedNurseId:null}));
      setRooms(seededRooms);StorageService.saveRooms(seededRooms);
      setDate(target.date);setShiftType(target.shiftType);
-     localStorage.setItem(PLAN_SOURCE_KEY,sourceKey);
+     StorageService.savePlanSource(sourceKey);
    }
    const saved=StorageService.loadPlanBaseline();if(saved?.date===target.date&&saved.pmOnCall)setPmOnCall(saved.pmOnCall);
    setActiveTab('plan');
  };
- const reset=()=>{StorageService.resetToDefaults();localStorage.removeItem(PLAN_SOURCE_KEY);localStorage.removeItem(PM_ONCALL_KEY);setRoster(StorageService.loadStaff());setRooms(StorageService.loadRooms());setOnCall(StorageService.loadOnCall());setPmOnCall({...EMPTY_ONCALL});setForecastEvents(StorageService.loadForecast());setWarnings([]);setCurrentShift(StorageService.loadCurrentShift());setHistory([]);setActiveTab('current')};
+ const reset=()=>{StorageService.resetToDefaults();setRoster(StorageService.loadStaff());setRooms(StorageService.loadRooms());setOnCall(StorageService.loadOnCall());setPmOnCall(StorageService.loadPmOnCall());setForecastEvents(StorageService.loadForecast());setWarnings([]);setCurrentShift(StorageService.loadCurrentShift());setEvents(StorageService.loadOperationalEvents());setPlanBaseline(StorageService.loadPlanBaseline());setHistory(StorageService.loadHistory());setDate(StorageService.loadPlanDate(tomorrowIso()));setShiftType(StorageService.loadShiftType());setMtState(StorageService.loadPlanMtState());setPctState(StorageService.loadPlanPctState());setCurrentMRS(StorageService.loadCurrentMrs(MRS_CONFIG.target));setProjectedMRS(StorageService.loadProjectedMrs(MRS_CONFIG.target));setActiveTab('current')};
  const refreshHistory=()=>setHistory(StorageService.loadHistory());const previousShift=history[0]||null;
  const openPrint=()=>{refreshHistory();setPlanBaseline(StorageService.loadPlanBaseline());setActiveTab('print')};
  const downloadExcel=()=>{const savedPlan=StorageService.loadPlanBaseline();setPlanBaseline(savedPlan);downloadDailyStaffingExcel(currentShift,previousShift,savedPlan);};
