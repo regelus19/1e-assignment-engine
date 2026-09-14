@@ -43,6 +43,24 @@ export const CurrentStaffing:React.FC<Props>=({currentShift,onCurrentShiftChange
  const exportShiftCsv=()=>{const headers=['Shift Date','Shift','Exported At','Room','PatientStayID','Acuity','Flags','Assigned Nurse','Role','Capability','Staff Status','Phone','MT Coverage','PCT Support','Clinical Supervisor'];const rows=currentShift.rooms.filter(r=>r.isOccupied).map(room=>{const nurse=currentShift.roster.find(s=>s.id===room.assignedNurseId);return [currentShift.date,currentShift.shiftType,new Date().toISOString(),room.roomNumber,room.patientStayId,room.acuity,room.flags.join(' | '),nurse?.name||'',nurse?.role||'',nurse?.capability||'',nurse?.staffStatus||'',nurse?.assignedPhone||'',currentShift.mtState,currentShift.pctState,currentShift.clinicalSupervisorPresent?'Present':'Not Present'];});const csv='\ufeff'+[headers,...rows].map(row=>row.map(csvCell).join(',')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`1E_Assignment_${currentShift.date}_${currentShift.shiftType}.csv`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);};
  const shiftEvents=useMemo(()=>events.filter(e=>e.shiftDate===currentShift.date&&e.shiftType===currentShift.shiftType).slice(0,12),[events,currentShift.date,currentShift.shiftType]);
 
+ const OpsRow=({icon,label,sub,onClick,disabled}:{icon:React.ReactNode;label:string;sub:string;onClick:()=>void;disabled?:boolean})=>(
+  <button onClick={onClick} disabled={disabled} className="w-full flex items-center gap-3 text-left px-3 py-3.5 rounded-xl border border-slate-200 disabled:opacity-40 active:bg-slate-100">
+   <span className="w-9 h-9 rounded-lg bg-slate-100 grid place-items-center shrink-0 text-slate-700">{icon}</span>
+   <span className="min-w-0"><span className="block text-sm font-black text-slate-900">{label}</span>
+    <span className="block text-[11px] text-slate-500">{sub}</span></span>
+  </button>
+ );
+ const mobileActions=(
+  <div className="space-y-2">
+   <OpsRow icon={<Play className="w-4 h-4"/>} label="Auto Generate" sub="Get three staffing suggestions" onClick={()=>generate(false)}/>
+   <OpsRow icon={<Sparkles className="w-4 h-4"/>} label="Fill Unassigned" sub={fixedRoomNumbers.length?`Keeps your ${fixedRoomNumbers.length} manual assignment${fixedRoomNumbers.length>1?'s':''}`:'Assign some rooms first'} disabled={fixedRoomNumbers.length===0} onClick={()=>generate(true)}/>
+   {onOpenPrint&&<OpsRow icon={<Printer className="w-4 h-4"/>} label="Print Daily Sheet" sub="Portrait sheet for the unit" onClick={onOpenPrint}/>} 
+   {onDownloadExcel&&<OpsRow icon={<Download className="w-4 h-4"/>} label="Download Excel" sub="Save or archive this shift" onClick={onDownloadExcel}/>} 
+   <OpsRow icon={<Save className="w-4 h-4"/>} label="Finalize / Save Shift" sub="Send this shift to History" onClick={finalizeShift}/>
+   <OpsRow icon={<Settings2 className="w-4 h-4"/>} label={showRoster?'Hide roster editor':'Edit roster'} sub="Add or change nurses" onClick={()=>setShowRoster(v=>!v)}/>
+   <OpsRow icon={<RefreshCw className="w-4 h-4"/>} label="Reset from Saved Plan" sub="Start over from the next-shift plan" onClick={onStartFromPlan}/>
+  </div>
+ );
  return <div className="space-y-3">
   <div className="bg-white border rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-2">
    <div className="flex flex-wrap items-center gap-3"><div><div className="text-[10px] font-black uppercase text-slate-500">Quick Assignment</div><div className="text-sm font-black">{currentShift.date} • {currentShift.shiftType} Shift</div></div><div className="text-xs bg-slate-100 rounded px-2 py-1">Census <b>{census}</b></div><div className="text-xs bg-slate-100 rounded px-2 py-1">RNs <b>{activeRNs}</b></div><div className={`text-xs rounded px-2 py-1 ${liveUnassigned?'bg-rose-100 text-rose-800':'bg-emerald-100 text-emerald-800'}`}>Needs RN <b>{liveUnassigned}</b></div></div>
@@ -55,7 +73,7 @@ export const CurrentStaffing:React.FC<Props>=({currentShift,onCurrentShiftChange
    </div>
   </div>
 
-  <FloorPlanCurrentStaffing quickMode currentShift={currentShift} onRoomChange={updateRoom} onAssignRoom={assignRoom} onStaffStatusChange={updateStatus} onRecallPrevious={recallPreviousAssignments} lockedNurseIds={lockedNurseIds} onToggleLock={toggleLock}/>
+  <FloorPlanCurrentStaffing quickMode currentShift={currentShift} onRoomChange={updateRoom} onAssignRoom={assignRoom} onStaffStatusChange={updateStatus} onRecallPrevious={recallPreviousAssignments} lockedNurseIds={lockedNurseIds} onToggleLock={toggleLock} actions={mobileActions}/>
 
   <details className="bg-white rounded-xl border p-3">
    <summary className="font-black text-xs uppercase cursor-pointer flex items-center gap-2"><Settings2 className="w-4 h-4"/>More tools / setup</summary>
