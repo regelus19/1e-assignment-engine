@@ -4,20 +4,15 @@ import { App } from './App';
 import { initializeOperationalRepository } from './services/repository';
 import './index.css';
 
-const render = () => ReactDOM.createRoot(document.getElementById('root')!).render(
+ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
 );
 
-void initializeOperationalRepository()
-  .then(render)
-  .catch(error => {
-    console.error('Unable to initialize data repository', error);
-    ReactDOM.createRoot(document.getElementById('root')!).render(
-      <div style={{padding:24,fontFamily:'sans-serif'}}>
-        <h2>1E Assignment App could not start</h2>
-        <p>Shared-data configuration or Microsoft 365 sign-in needs attention. No local fallback was used.</p>
-      </div>
-    );
-  });
+// Repository initialization must never prevent the assignment board from
+// rendering. Local mode remains immediately usable; shared-data setup can
+// initialize afterward and report failures without replacing the UI.
+void initializeOperationalRepository().catch(error => {
+  console.error('Unable to initialize data repository; app remains available.', error);
+});
