@@ -1,0 +1,53 @@
+name: Apply Claude CN refactor
+
+on:
+  push:
+    branches:
+      - claude-cn-refactor
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: ${{ !contains(github.event.head_commit.message, '[patch-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Reconstruct Claude text patch
+        run: |
+          cat .patch-staging/xz.part00 .patch-staging/xz.part01 .patch-staging/xz.part02 .patch-staging/xz.part03 > /tmp/claude.b64
+          base64 -d /tmp/claude.b64 > /tmp/claude.patch.xz
+          xz -dc /tmp/claude.patch.xz > /tmp/claude.patch
+          git apply --check /tmp/claude.patch
+
+      - name: Apply Claude patch
+        run: |
+          git apply --index /tmp/claude.patch
+          git commit -m "Apply Claude CN geography and workflow refactor"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build and verify
+        run: |
+          npm run build
+          npm run check:geo
+          npm run check:engine
+
+      - name: Remove staging payload and temporary workflow
+        run: |
+          rm -rf .patch-staging
+          rm -f .github/workflows/apply-claude-refactor.yml
+          git add -A
+          git commit -m "[patch-applied] remove temporary patch staging"
+          git push origin HEAD:claude-cn-refactor
