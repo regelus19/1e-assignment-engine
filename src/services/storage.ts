@@ -7,6 +7,7 @@ import {
   CurrentShiftState,
   OperationalEvent,
   PlanBaseline,
+  PlanningWorkspace,
   MTCoverageState,
   PCTCoverageState,
 } from '../types';
@@ -27,7 +28,9 @@ const PLAN_SOURCE_KEY = '1E_PLAN_SOURCE_SHIFT';
 const PM_ONCALL_KEY = '1E_NEXT_DAY_PM_ONCALL';
 const PLAN_MT_STATE_KEY = '1E_PLAN_MT_STATE';
 const PLAN_PCT_STATE_KEY = '1E_PLAN_PCT_STATE';
+const PLANNING_WORKSPACE_KEY = '1E_PLANNING_WORKSPACE';
 
+const EMPTY_ONCALL: OnCallProviders = { intensivist:'', cardiothoracic:'', acuteMI:'', cardiology:'', hospitalist:'' };
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const safeParse = <T,>(raw: string | null, fallback: T): T => {
   if (!raw) return clone(fallback);
@@ -152,12 +155,43 @@ export const StorageService = {
   loadPlanSource(): string | null { return localStorage.getItem(PLAN_SOURCE_KEY); },
   savePlanSource(value: string): void { localStorage.setItem(PLAN_SOURCE_KEY, value); },
   clearPlanSource(): void { localStorage.removeItem(PLAN_SOURCE_KEY); },
-  loadPmOnCall(): OnCallProviders { return safeParse(localStorage.getItem(PM_ONCALL_KEY), { intensivist:'', cardiothoracic:'', acuteMI:'', cardiology:'', hospitalist:'' }); },
+  loadPmOnCall(): OnCallProviders { return safeParse(localStorage.getItem(PM_ONCALL_KEY), EMPTY_ONCALL); },
   savePmOnCall(value: OnCallProviders): void { localStorage.setItem(PM_ONCALL_KEY, JSON.stringify(value)); },
   loadPlanMtState(): MTCoverageState { const raw = localStorage.getItem(PLAN_MT_STATE_KEY); return raw === 'RN_COVERING_MT' || raw === 'MT_UNFILLED' ? raw : 'MT_PRESENT'; },
   savePlanMtState(value: MTCoverageState): void { localStorage.setItem(PLAN_MT_STATE_KEY, value); },
   loadPlanPctState(): PCTCoverageState { return localStorage.getItem(PLAN_PCT_STATE_KEY) === 'PCT_NONE' ? 'PCT_NONE' : 'PCT_PRESENT'; },
   savePlanPctState(value: PCTCoverageState): void { localStorage.setItem(PLAN_PCT_STATE_KEY, value); },
+
+  loadPlanningWorkspace(defaultDate: string, defaultMrs: number): PlanningWorkspace {
+    const raw = localStorage.getItem(PLANNING_WORKSPACE_KEY);
+    if (raw) {
+      try {
+        return JSON.parse(raw) as PlanningWorkspace;
+      } catch {
+        // Fall through to a safe migration from the Stage B keys.
+      }
+    }
+    const migrated: PlanningWorkspace = {
+      targetDate: this.loadPlanDate(defaultDate),
+      shiftType: this.loadShiftType(),
+      roster: this.loadStaff(),
+      rooms: this.loadRooms(),
+      mtState: this.loadPlanMtState(),
+      pctState: this.loadPlanPctState(),
+      onCall: this.loadOnCall(),
+      pmOnCall: this.loadPmOnCall(),
+      currentMRS: this.loadCurrentMrs(defaultMrs),
+      projectedMRS: this.loadProjectedMrs(defaultMrs),
+      lastUpdatedAt: new Date().toISOString(),
+    };
+    this.savePlanningWorkspace(migrated);
+    return migrated;
+  },
+  savePlanningWorkspace(workspace: PlanningWorkspace): PlanningWorkspace {
+    const stamped = { ...workspace, lastUpdatedAt: new Date().toISOString() };
+    localStorage.setItem(PLANNING_WORKSPACE_KEY, JSON.stringify(stamped));
+    return stamped;
+  },
 
   resetToDefaults(): void {
     [
@@ -177,6 +211,7 @@ export const StorageService = {
       PM_ONCALL_KEY,
       PLAN_MT_STATE_KEY,
       PLAN_PCT_STATE_KEY,
+      PLANNING_WORKSPACE_KEY,
     ].forEach(key => localStorage.removeItem(key));
   },
   findContinuity(patientStayId: string, currentRoster: NurseStaff[], targetDate?: string, targetShift?: 'Day'|'Night'): { nurseId: string; nurseName: string; daysAgo: number } | null {
