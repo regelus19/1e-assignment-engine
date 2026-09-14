@@ -25,7 +25,7 @@ jobs:
 
       - name: Reconstruct Claude text patch
         run: |
-          cat .patch-staging/xz.part00 .patch-staging/xz.part01 .patch-staging/xz.part02a .patch-staging/xz.part02b .patch-staging/xz.part02c .patch-staging/xz.part02d .patch-staging/xz.part03 > /tmp/claude.b64
+          cat .patch-staging/xz.part00 .patch-staging/xz.part01 .patch-staging/xz.part02a0 .patch-staging/xz.part02a1 .patch-staging/xz.part02a2 .patch-staging/xz.part02b .patch-staging/xz.part02c .patch-staging/xz.part02d .patch-staging/xz.part03 > /tmp/claude.b64
           base64 -d /tmp/claude.b64 > /tmp/claude.patch.xz
           xz -dc /tmp/claude.patch.xz > /tmp/claude.patch
           git apply --check /tmp/claude.patch
