@@ -3,6 +3,7 @@ import {
   CurrentShiftState,
   FinalizedShiftSnapshot,
   OperationalEvent,
+  PlanBaseline,
   PlanningWorkspace,
 } from '../../types';
 import { StorageService } from '../storage';
@@ -58,6 +59,23 @@ export class LocalOperationalRepository implements OperationalRepository {
     return { data, metadata: localMetadata('plan', data.lastUpdatedAt) };
   }
 
+  async loadPlanBaseline(
+    _unitId: string,
+    _date: string,
+    _shiftType: ShiftType
+  ): Promise<RepositoryResult<PlanBaseline | null>> {
+    const data = StorageService.loadPlanBaseline();
+    return { data, metadata: localMetadata('baseline', data?.savedAt) };
+  }
+
+  async savePlanBaseline(
+    baseline: PlanBaseline,
+    _expectedETag?: string
+  ): Promise<RepositoryResult<PlanBaseline>> {
+    StorageService.savePlanBaseline(baseline);
+    return { data: baseline, metadata: localMetadata('baseline', baseline.savedAt) };
+  }
+
   async loadHistory(
     _unitId: string
   ): Promise<RepositoryResult<FinalizedShiftSnapshot[]>> {
@@ -80,10 +98,10 @@ export class LocalOperationalRepository implements OperationalRepository {
     date?: string,
     shiftType?: ShiftType
   ): Promise<RepositoryResult<OperationalEvent[]>> {
-    const allEvents = StorageService.loadOperationalEvents();
+    const all = StorageService.loadOperationalEvents();
     const data = date && shiftType
-      ? allEvents.filter(event => event.shiftDate === date && event.shiftType === shiftType)
-      : allEvents;
+      ? all.filter(event => event.shiftDate === date && event.shiftType === shiftType)
+      : all;
     const lastModified = data[0]?.timestamp;
     return { data, metadata: localMetadata('events', lastModified) };
   }
@@ -92,7 +110,9 @@ export class LocalOperationalRepository implements OperationalRepository {
     event: OperationalEvent
   ): Promise<RepositoryResult<OperationalEvent[]>> {
     StorageService.appendOperationalEvent(event);
-    const data = StorageService.loadOperationalEvents();
+    const data = StorageService.loadOperationalEvents().filter(
+      item => item.shiftDate === event.shiftDate && item.shiftType === event.shiftType
+    );
     return { data, metadata: localMetadata('events', event.timestamp) };
   }
 }

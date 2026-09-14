@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AssignmentWarning, CurrentShiftState, FinalizedShiftSnapshot, ForecastEvent, NurseStaff, OperationalEvent, PatientRoom, PlanBaseline, PlanningWorkspace } from './types';
 import { StorageService } from './services/storage';
-import { operationalRepository } from './services/repository';
+import { operationalRepository, RepositoryConflictError } from './services/repository';
 import { downloadDailyStaffingExcel } from './services/excelExport';
 import { MRS_CONFIG, getMRSStatus } from './config/mrs';
 import { PrintSheet } from './components/PrintSheet';
@@ -13,7 +13,6 @@ import { HistoryView } from './components/HistoryView';
 import { CalendarDays, Clock3, Download, History, Printer, RotateCcw, Settings2 } from 'lucide-react';
 
 const UNIT_ID='1E';
-const tomorrowIso=()=>{const d=new Date();d.setDate(d.getDate()+1);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 type Tab='current'|'plan'|'forecast'|'history'|'print';
 
 const nextShiftIdentity=(current:CurrentShiftState)=>{
@@ -23,27 +22,26 @@ const nextShiftIdentity=(current:CurrentShiftState)=>{
 };
 
 export const App:React.FC=()=>{
- const[activeTab,setActiveTab]=useState<Tab>('current'),[planningWorkspace,setPlanningWorkspace]=useState<PlanningWorkspace|null>(null),[forecastEvents,setForecastEvents]=useState<ForecastEvent[]>(()=>StorageService.loadForecast()),[warnings,setWarnings]=useState<AssignmentWarning[]>([]),[fitScore]=useState(100),[currentShift,setCurrentShift]=useState<CurrentShiftState|null>(null),[events,setEvents]=useState<OperationalEvent[]>([]),[planBaseline,setPlanBaseline]=useState<PlanBaseline|null>(()=>StorageService.loadPlanBaseline()),[history,setHistory]=useState<FinalizedShiftSnapshot[]>([]);
+ const[activeTab,setActiveTab]=useState<Tab>('current'),[planningWorkspace,setPlanningWorkspace]=useState<PlanningWorkspace|null>(null),[forecastEvents,setForecastEvents]=useState<ForecastEvent[]>(()=>StorageService.loadForecast()),[warnings,setWarnings]=useState<AssignmentWarning[]>([]),[fitScore]=useState(100),[currentShift,setCurrentShift]=useState<CurrentShiftState|null>(null),[events,setEvents]=useState<OperationalEvent[]>([]),[planBaseline,setPlanBaseline]=useState<PlanBaseline|null>(null),[history,setHistory]=useState<FinalizedShiftSnapshot[]>([]);
 
  const loadOperationalState=async()=>{
    const live=await operationalRepository.loadCurrentShift(UNIT_ID);
-   const plan=await operationalRepository.loadPlanningWorkspace(UNIT_ID,tomorrowIso(),'Day');
-   const [historyResult,eventResult]=await Promise.all([
+   const target=nextShiftIdentity(live.data);
+   const [plan,historyResult,eventResult,baselineResult]=await Promise.all([
+     operationalRepository.loadPlanningWorkspace(UNIT_ID,target.date,target.shiftType),
      operationalRepository.loadHistory(UNIT_ID),
      operationalRepository.loadOperationalEvents(UNIT_ID,live.data.date,live.data.shiftType),
+     operationalRepository.loadPlanBaseline(UNIT_ID,target.date,target.shiftType),
    ]);
-   return {live:live.data,plan:plan.data,history:historyResult.data,events:eventResult.data};
+   return {live:live.data,plan:plan.data,history:historyResult.data,events:eventResult.data,baseline:baselineResult.data};
  };
 
  useEffect(()=>{
    let active=true;
    void loadOperationalState().then(state=>{
      if(!active)return;
-     setCurrentShift(state.live);
-     setPlanningWorkspace(state.plan);
-     setHistory(state.history);
-     setEvents(state.events);
-   });
+     setCurrentShift(state.live);setPlanningWorkspace(state.plan);setHistory(state.history);setEvents(state.events);setPlanBaseline(state.baseline);
+   }).catch(error=>{console.error('Unable to load operational state',error);});
    return()=>{active=false;};
  },[]);
 
@@ -55,30 +53,29 @@ export const App:React.FC=()=>{
  const updatePlanningWorkspace=(patch:Partial<PlanningWorkspace>)=>setPlanningWorkspace(current=>{
    if(!current)return current;
    const next={...current,...patch,lastUpdatedAt:new Date().toISOString()};
-   void operationalRepository.savePlanningWorkspace(next);
+   void operationalRepository.savePlanningWorkspace(next).then(result=>setPlanningWorkspace(result.data)).catch(error=>{
+     if(error instanceof RepositoryConflictError){setPlanningWorkspace(error.latest.data as PlanningWorkspace);window.alert('Another user updated this plan. The latest shared version has been loaded; please review your change.');return;}
+     console.error('Unable to save planning workspace',error);
+   });
    return next;
  });
  const currentStatus=getMRSStatus(currentMRS),projectedStatus=getMRSStatus(projectedMRS),plannedCensus=rooms.filter(r=>r.isOccupied).length,currentCensus=currentShift.rooms.filter(r=>r.isOccupied).length,currentActiveRNs=currentShift.roster.filter(s=>['RN','Preceptor'].includes(s.role)&&['ACTIVE','RECALLED'].includes(s.staffStatus)).length;
  const supportRisk:string[]=[];if(currentShift.mtState==='MT_UNFILLED')supportRisk.push('MT unfilled');if(currentShift.mtState==='RN_COVERING_MT')supportRisk.push('RN covering MT');if(currentShift.pctState==='PCT_NONE')supportRisk.push('No PCT');
  const saveRoster=(u:NurseStaff[])=>updatePlanningWorkspace({roster:u});
  const saveRooms=(u:PatientRoom[])=>updatePlanningWorkspace({rooms:u});
- const savePlanBaseline=()=>{const b:PlanBaseline={id:`plan-${Date.now()}`,date,shiftType,finalizedAt:new Date().toISOString(),savedAt:new Date().toISOString(),roster,rooms,onCall,pmOnCall,fitScore,warnings,mtState,pctState,currentMRS,projectedMRS};StorageService.savePlanBaseline(b);setPlanBaseline(b);window.alert('Next Shift Plan saved as baseline, including AM and PM on-call coverage.')};
- const startCurrentFromPlan=()=>{const p=StorageService.loadPlanBaseline();if(!p){window.alert('Save a Next Shift Plan baseline first.');setActiveTab('plan');return}const s:CurrentShiftState={date:p.date,shiftType:p.shiftType,roster:p.roster,rooms:p.rooms,mtState:p.mtState,pctState:p.pctState,onCall:p.onCall,lastUpdatedAt:new Date().toISOString()};setCurrentShift(s);void operationalRepository.saveCurrentShift(s);const event:OperationalEvent={id:`evt-${Date.now()}`,timestamp:new Date().toISOString(),shiftDate:s.date,shiftType:s.shiftType,type:'SHIFT_STARTED',summary:'Current staffing initialized from saved plan baseline.'};void operationalRepository.appendOperationalEvent(event).then(result=>setEvents(result.data));setActiveTab('current')};
+ const savePlanBaseline=()=>{const b:PlanBaseline={id:`plan-${Date.now()}`,date,shiftType,finalizedAt:new Date().toISOString(),savedAt:new Date().toISOString(),roster,rooms,onCall,pmOnCall,fitScore,warnings,mtState,pctState,currentMRS,projectedMRS};void operationalRepository.savePlanBaseline(b).then(result=>{setPlanBaseline(result.data);window.alert('Next Shift Plan saved as baseline, including AM and PM on-call coverage.');}).catch(error=>{if(error instanceof RepositoryConflictError){setPlanBaseline(error.latest.data as PlanBaseline|null);window.alert('Another user updated this plan before your save. The latest shared baseline has been loaded.');return;}console.error('Unable to save plan baseline',error);});};
+ const startCurrentFromPlan=()=>{void (async()=>{const result=await operationalRepository.loadPlanBaseline(UNIT_ID,date,shiftType);const p=result.data;if(!p){window.alert('Save a Next Shift Plan baseline first.');setActiveTab('plan');return}const s:CurrentShiftState={date:p.date,shiftType:p.shiftType,roster:p.roster,rooms:p.rooms,mtState:p.mtState,pctState:p.pctState,onCall:p.onCall,lastUpdatedAt:new Date().toISOString()};setCurrentShift(s);await operationalRepository.saveCurrentShift(s);const event:OperationalEvent={id:`evt-${Date.now()}`,timestamp:new Date().toISOString(),shiftDate:s.date,shiftType:s.shiftType,type:'SHIFT_STARTED',summary:'Current staffing initialized from saved plan baseline.'};const eventResult=await operationalRepository.appendOperationalEvent(event);setEvents(eventResult.data);setActiveTab('current');})().catch(error=>console.error('Unable to start current shift from plan',error));};
  const openNextShiftPlan=()=>{
    const sourceKey=`${currentShift.date}|${currentShift.shiftType}`;
    const target=nextShiftIdentity(currentShift);
-   if(StorageService.loadPlanSource()!==sourceKey){
-     const seededRooms=currentShift.rooms.map(r=>({...r,assignedNurseId:null}));
-     updatePlanningWorkspace({rooms:seededRooms,targetDate:target.date,shiftType:target.shiftType});
-     StorageService.savePlanSource(sourceKey);
-   }
-   const saved=StorageService.loadPlanBaseline();if(saved?.date===target.date&&saved.pmOnCall)updatePlanningWorkspace({pmOnCall:saved.pmOnCall});
+   if(StorageService.loadPlanSource()!==sourceKey){const seededRooms=currentShift.rooms.map(r=>({...r,assignedNurseId:null}));updatePlanningWorkspace({rooms:seededRooms,targetDate:target.date,shiftType:target.shiftType});StorageService.savePlanSource(sourceKey);}
+   void operationalRepository.loadPlanBaseline(UNIT_ID,target.date,target.shiftType).then(result=>{setPlanBaseline(result.data);if(result.data?.pmOnCall)updatePlanningWorkspace({pmOnCall:result.data.pmOnCall});});
    setActiveTab('plan');
  };
- const reset=()=>{StorageService.resetToDefaults();setPlanningWorkspace(null);setCurrentShift(null);setEvents([]);setHistory([]);setForecastEvents(StorageService.loadForecast());setWarnings([]);setPlanBaseline(StorageService.loadPlanBaseline());setActiveTab('current');void loadOperationalState().then(state=>{setCurrentShift(state.live);setPlanningWorkspace(state.plan);setHistory(state.history);setEvents(state.events);});};
+ const reset=()=>{StorageService.resetToDefaults();setPlanningWorkspace(null);setCurrentShift(null);setEvents([]);setHistory([]);setForecastEvents(StorageService.loadForecast());setWarnings([]);setPlanBaseline(null);setActiveTab('current');void loadOperationalState().then(state=>{setCurrentShift(state.live);setPlanningWorkspace(state.plan);setHistory(state.history);setEvents(state.events);setPlanBaseline(state.baseline);});};
  const refreshHistory=async()=>{const result=await operationalRepository.loadHistory(UNIT_ID);setHistory(result.data);return result.data;};
- const openPrint=()=>{void refreshHistory().then(()=>{setPlanBaseline(StorageService.loadPlanBaseline());setActiveTab('print')});};
- const downloadExcel=()=>{void refreshHistory().then(latestHistory=>{const savedPlan=StorageService.loadPlanBaseline();setPlanBaseline(savedPlan);downloadDailyStaffingExcel(currentShift,latestHistory[0]||null,savedPlan);});};
+ const openPrint=()=>{void refreshHistory().then(()=>setActiveTab('print'));};
+ const downloadExcel=()=>{void refreshHistory().then(latestHistory=>downloadDailyStaffingExcel(currentShift,latestHistory[0]||null,planBaseline));};
  const previousShift=history[0]||null;
 
  return <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
