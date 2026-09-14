@@ -22,7 +22,7 @@ export const initializeOperationalRepository = async (): Promise<OperationalRepo
   const tenantId = env.VITE_MSAL_TENANT_ID || '';
   const redirectUri = env.VITE_MSAL_REDIRECT_URI || window.location.origin;
   const scopes = (env.VITE_GRAPH_SCOPES || 'https://graph.microsoft.com/Sites.ReadWrite.All')
-    .split(',').map(value=>value.trim()).filter(Boolean);
+    .split(',').map((value:string)=>value.trim()).filter(Boolean);
   const complete = !!(siteId && operationalListId && historyListId && clientId && tenantId);
 
   if (!complete) {
