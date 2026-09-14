@@ -1,0 +1,45 @@
+name: Apply Claude CN geography patch
+
+on:
+  push:
+    branches:
+      - claude-cn-geography-patch
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[patch-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Apply Claude patch series
+        run: |
+          git am --3way .patches/claude-text-only.patch
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build and verify
+        run: |
+          npm run build
+          npm run check:geo
+          npm run check:engine
+
+      - name: Remove temporary patch runner
+        run: |
+          rm -f .patches/claude-text-only.patch
+          rm -f .github/workflows/apply-claude-patch.yml
+          git add -A
+          git commit -m "[patch-applied] remove temporary patch runner"
+          git push origin HEAD:claude-cn-geography-patch

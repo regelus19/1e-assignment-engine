@@ -1,0 +1,168 @@
+From 4625f59feb8588518df66b1187246b0072e3539b Mon Sep 17 00:00:00 2001
+From: 1E Refactor <dev@local>
+Date: Mon, 14 Sep 2026 01:05:23 +0000
+Subject: [PATCH 1/2] Walking-distance geography + one-screen CN quick assign
+
+Geography
+- Replace hall-membership scoring with a corridor graph built from the real
+  floor-plan coordinates and searched with Dijkstra. 122+114 previously scored
+  'very good cluster' because both are Hall C, despite being opposite ends of
+  the west wing.
+- Delete every hard-coded room-number rule (UNSAFE_ICU_PAIRS,
+  PREFERRED_ICU_PAIRS, the 103 / 122-114 helpers, the 103/104/113/114 quartet
+  repair). All are now derived from distance bands.
+- Fix a contradiction: the engine actively preferred pairing 122 ICU with 113,
+  which is the longest walk on the unit.
+- ROOM_POSITIONS moves into config/geography.ts so the map and the engine can
+  no longer disagree. Derived adjacency replaces the hand-listed version, which
+  claimed 113 was adjacent to 122.
+- New tightenGeography pass swaps rooms between nurses when it lowers the worst
+  walk without breaking ratio, capability, or CN intent.
+
+Charge Nurse workflow
+- Rapid acuity and flag coding now render on Current Staffing. Previously
+  quickMode hid RapidRoomTools and the room detail panel entirely, so acuity
+  and flags were unreachable on the CN's primary screen.
+- One board component for both Current Staffing and Next Shift Plan.
+- Auto / Fill Unassigned / Print / Excel promoted out of the collapsed
+  'More tools' section into the always-visible action bar.
+- Room detail becomes a floating exception panel instead of a third column.
+- Add Expected Admission flag (vacant-room demand, does not raise census).
+
+Semi-Auto locking
+- Separate fixed rooms from locked nurses. Pre-assigning one room previously
+  capped that nurse for the rest of the run; the CN normally seeds a nurse's
+  sickest patient and still expects Semi-Auto to fill to ratio.
+- Add a per-nurse lock toggle on the nurse rail.
+
+Repo hygiene
+- Add .gitignore; node_modules and dist were previously uncovered.
+---
+ .gitignore                                  |   7 +
+ README.md                                   |  17 +
+ package.json                                |   7 +-
+ scripts/engine-check.ts                     |  40 ++
+ scripts/geo-check.ts                        |  34 ++
+ src/App.tsx                                 |   2 +-
+ src/components/CurrentStaffing.tsx          |  26 +-
+ src/components/FloorPlanCurrentStaffing.tsx | 500 ++++++++++++++++++--
+ src/components/RapidRoomTools.tsx           |  73 ---
+ src/components/TomorrowStaffing.tsx         |   9 +-
+ src/config/geography.ts                     | 369 ++++++++++-----
+ src/services/recommendationEngine.ts        |  83 ++--
+ src/services/recommendationPostProcessor.ts | 291 +++++++++---
+ src/types/index.ts                          |   2 +-
+ 14 files changed, 1123 insertions(+), 337 deletions(-)
+ create mode 100644 .gitignore
+ create mode 100644 scripts/engine-check.ts
+ create mode 100644 scripts/geo-check.ts
+ delete mode 100644 src/components/RapidRoomTools.tsx
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..ac97605
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,7 @@
++node_modules/
++dist/
++.env
++.env.local
++.DS_Store
++*.log
++package-lock.json
+diff --git a/README.md b/README.md
+index a338045..b127a3d 100644
+--- a/README.md
++++ b/README.md
+@@ -12,6 +12,23 @@ The application remains advisory. Charge Nurse judgment and hospital staffing/cl
+ 
+ V1 uses browser `localStorage`. Do not enter patient names, MRNs, DOBs, or other patient identifiers. The optional stay token is non-PHI and exists only to support continuity testing.
+ 
++## Geography model
++
++Room positions and walking distance share one source of truth in
++`src/config/geography.ts`. A corridor graph is built from the floor-plan
++coordinates and searched with Dijkstra, so `walkingDistance('103','113')`
++answers "how far does this nurse actually walk" rather than "are these rooms in
++the same hall".
++
++Geographic quality is scored from `GEOGRAPHY_BANDS`. Tune those four numbers â€”
++never room-number lists. There are no hard-coded good/bad room pairs anywhere in
++the engine any more.
++
++```bash
++npm run check:geo      # distance matrix + the CN's known good/bad pairings
++npm run check:engine   # full assignment run, Auto vs Semi-Auto vs locked
++```
++
+ ## Floor-plan asset
+ 
+ The canonical binary floor-plan image is committed at:
+diff --git a/package.json b/package.json
+index dd550eb..b0b620a 100644
+--- a/package.json
++++ b/package.json
+@@ -7,7 +7,9 @@
+     "dev": "vite",
+     "typecheck": "tsc --noEmit",
+     "build": "npm run typecheck && vite build",
+-    "preview": "vite preview"
++    "preview": "vite preview",
++    "check:geo": "tsx scripts/geo-check.ts",
++    "check:engine": "tsx scripts/engine-check.ts"
+   },
+   "dependencies": {
+     "lucide-react": "^0.344.0",
+@@ -23,7 +25,8 @@
+     "postcss": "^8.4.35",
+     "tailwindcss": "^3.4.1",
+     "typescript": "^5.2.2",
+-    "vite": "^5.1.6"
++    "vite": "^5.1.6",
++    "tsx": "^4.19.2"
+   },
+   "engines": {
+     "node": ">=20 <23"
+diff --git a/scripts/engine-check.ts b/scripts/engine-check.ts
+new file mode 100644
+index 0000000..2eb8eb8
+--- /dev/null
++++ b/scripts/engine-check.ts
+@@ -0,0 +1,40 @@
++import { runRecommendationEngine } from '../src/services/recommendationEngine';
++import { postProcessRecommendation } from '../src/services/recommendationPostProcessor';
++import { INITIAL_STAFF, INITIAL_ROOMS } from '../src/services/storage';
++import { NurseStaff, PatientRoom } from '../src/types';
++import { clusterSpread } from '../src/config/geography';
++
++const staff: NurseStaff[] = JSON.parse(JSON.stringify(INITIAL_STAFF));
++staff.push({ id:'n10', name:'Renee Cole', role:'Preceptor', assignedPhone:'44-4100', capability:'ICU', staffStatus:'ACTIVE', orientationPartnerId:'n11' });
++staff.push({ id:'n11', name:'Mark Alvarez', role:'Orientee', assignedPhone:'', capability:'PCU_TELE', staffStatus:'ACTIVE', orientationPartnerId:'n10' });
++staff.find(s=>s.id==='n7')!.staffStatus='ACTIVE';
++
++const rooms: PatientRoom[] = JSON.parse(JSON.stringify(INITIAL_ROOMS));
++const name = (id?: string|null) => staff.find(s=>s.id===id)?.name.split(' ')[0] ?? 'â€”';
++
++const show = (title: string, res: ReturnType<typeof runRecommendationEngine>) => {
++  console.log(`\n=== ${title} â€” ${res.fitLabel} (${res.fitScore})`);
++  const byNurse = new Map<string,string[]>();
++  Object.entries(res.assignments).forEach(([room,id]) => byNurse.set(id, [...(byNurse.get(id)||[]), room]));
++  [...byNurse.entries()].forEach(([id, rs]) => {
++    const occ = rs.filter(r => rooms.find(x=>x.roomNumber===r)?.isOccupied);
++    const spread = clusterSpread(occ);
++    const acu = occ.map(r => `${r}/${rooms.find(x=>x.roomNumber===r)!.acuity}`).join(' ');
++    console.log(`  ${name(id).padEnd(11)} ${acu.padEnd(34)} spread ${spread.toFixed(0).padStart(3)}${spread>62?'   <-- LONG WALK':''}`);
++  });
++  if (res.unassignedRooms.length) console.log('  UNASSIGNED:', res.unassignedRooms.join(', '));
++  res.warnings.filter(w=>w.severity!=='INFO').forEach(w=>console.log(`  ! ${w.severity} ${w.message.slice(0,110)}`));
++};
++
++const run = (fixed = {}, locked: string[] = []) =>
++  postProcessRecommendation(
++    runRecommendationEngine(staff, rooms, false, false, 'BALANCED', fixed, locked),
++    staff, rooms, Object.keys(fixed), locked);
++
++show('AUTO â€” balanced, nothing preassigned', run());
++
++// Semi-Auto: CN seeds one ²È="24AÉ½•‘ÕÉ”œð€!½¥…±åÍ¥Ìœð€%Í½±…Ñ¥½¸œð€M¥ÑÑ•È½M…™•Ñäœð€!¥ …±°I¥Í¬œð€½¹™ÕÍ•œð€‘µ¥ÍÍ¥½¸œð€QÉ…¹Í™•Èœð€A½ÍÍ¥‰±”œð€áÁ•Ñ•œð€áÁ•Ñ•‘µ¥ÍÍ¥½¸œð€	1=-œð€¥Í¡…É”œì(•áÁ½ÉÐ¥¹Ñ•É™…”I½½µ5•Ñ…‘…Ñ„ìÉ½½µ9Õµ‰•ÈèÍÑÉ¥¹œì¡…±°è€œð€œð€œìé½¹”è€UÁÁ•Èœð€5¥œð€1½Ý•Èœì¥Í%U…Á…‰±”è‰½½±•…¸ì¥ÍM…™•ÑåAÉ•™•ÉÉ•è‰½½±•…¸ìÁÉ½á¥µ¥ÑåÉ½ÕÁÌèÍÑÉ¥¹mtì…‘©…•¹ÑI½½µÌèÍÑÉ¥¹mtìô(•áÁ½ÉÐ¥¹Ñ•É™…”A…Ñ¥•¹ÑI½½´ìÉ½½µ9Õµ‰•ÈèÍÑÉ¥¹œì¥Í=ÕÁ¥•è‰½½±•…¸ìÁ…Ñ¥•¹ÑMÑ…å%èÍÑÉ¥¹œì…Õ¥ÑäèÕ¥Ñå1•Ù•°ì…Õ¥Ñå½¹™¥Éµ•üè‰½½±•…¸ì™±…Ìè½µÁ±•á¥Ñå±…mtì…ÍÍ¥¹•‘9ÕÉÍ•%èÍÑÉ¥¹œð¹Õ±°ìô(•áÁ½ÉÐ¥¹Ñ•É™…”9ÕÉÍ•MÑ…™˜ì¥èÍÑÉ¥¹œì¹…µ”èÍÑÉ¥¹œìÉ½±”èMÑ…™™I½±”ì…ÍÍ¥¹•‘A¡½¹”èÍÑÉ¥¹œì…Á…‰¥±¥Ñäè…Á…‰¥±¥Ñå1•Ù•°ìÍÑ…™™MÑ…ÑÕÌèMÑ…™™MÑ…ÑÕÌìÁ±…¹¹•‘I•ÑÕÉ¹Q¥µ”üèÍÑÉ¥¹œì…ÑÕ…±I•…±±Q¥µ”üèÍÑÉ¥¹œì½Ù•É¥¹5Püè‰½½±•…¸ì½É¥•¹Ñ…Ñ¥½¹A…ÉÑ¹•É%üèÍÑÉ¥¹œìô(´´€(È¸ÐÌ¸À(()É½´€ØÀÉÀÍ„å•”Å˜Äàá‰”Ù”ÐÄäØÀÐÍ™‰ˆàá•˜ÀÜÕ˜5½¸M•À€ÄÜ€ÀÀèÀÀèÀÀ€ÈÀÀÄ)É½´è€ÅI•™…Ñ½È€ñ‘•Ù±½…°ø)…Ñ”è5½¸°€ÄÐM•À€ÈÀÈØ€ÀÄèÔÄèÀä€¬ÀÀÀÀ)MÕ‰©•ÐèmAQ €È¼Ét…±¥‰É…Ñ”•½É…Á¡ä……¥¹ÍÐÑ¡”Õ¹…¹¹½Ñ…Ñ•…É¡¥Ñ•ÑÕÉ…°(Á±…¸()ÍÍ•Ð(´I•Á±…”€Å”µ™±½½ÉÁ±…¸¹Á¹œÝ¥Ñ Ñ¡”±•…¸Õ¹…¹¹½Ñ…Ñ•‘É…Ý¥¹œ€¡Í…µ”(€€ÄÔØáàÄÌÀÀ‘¥µ•¹Í¥½¹Ì¤°Í¼Ñ¡”É•É½½´¹Õµ‰•ÉÌ¹¼±½¹•ÈÍ¥ÐÕ¹‘•ÈÑ¡”(€¥¹Ñ•É…Ñ¥Ù”Ñ¥±•Ì¸(´¥àÑ¡”µ…À½¹Ñ…¥¹•È…ÍÁ•ÐÉ…Ñ¥¼è¥ÐÝ…Ì€ÄÌØÔ¼ÄÄÔÈ€ Ä¸ÄàÐä¤……¥¹ÍÐ…¸(€¥µ…”½˜€Ä¸ÈÀØÈ°Í¼½‰©•Ðµ½¹Ñ…¥¸±•ÑÑ•É‰½á•Ñ¡”Á±…¸…¹•Ù•ÉäÉ½½´Ñ¥±”(€Í…ÐÍ±¥¡Ñ±ä½™˜¥ÑÌÉ½½´°Ý½ÉÍÐ…ÐÑ¡”Ñ½À…¹‰½ÑÑ½´¸()½ÉÉ¥‘½ÈÑ½Á½±½ä°É•…½™˜Ñ¡”Á±…¸(´I•µ½Ù”Ñ¡”¹½ÉÑ ]MPð´ù9QIÉ½ÍÌ½ÉÉ¥‘½È¸Õ•ÍÐ1½Õ¹”€ÄÐÈÀ½ÕÁ¥•Ì(€Ñ¡”™Õ±°Ý¥‘Ñ ‰•ÑÝ••¸½ÉÉ¥‘½È€ÄÐÀÁ0…¹Ñ¡”€ÄÀÜ´ÄÀäÁ½¸€ÄÈÈ…¹€ÄÀÜ…É”(€¹½ÐÑ¡”Í¡½ÉÐ¡½ÀÑ¡•¥Èµ…ÀÁ½Í¥Ñ¥½¹Ì¥µÁ±ä¸(´M½ÕÑ ½ÉÉ¥‘½È€¡¹ÕÉÍ”ÍÑ…Ñ¥½¸€ÄÐÐÀ°…±½Ù•Ì€ÄÐÀÁ ¼ÄÐÀÁ(¤±¥¹­Ì]MP…¹(€9QI½¹±ä¸Q¡”€ÄÄÀ´ÄÄÌ‰±½¬ÉÕ¹ÌÑ¼Ñ¡”Í½ÕÑ •áÑ•É¥½ÈÝ…±°°Í¼Ñ¡”•…ÍÐ(€Ý¥¹œ¡…Ì•á…Ñ±ä½¹”½¹¹•Ñ¥½¸Ñ¼Ñ¡”Õ¹¥Ðè½ÉÉ¥‘½È€ÄÐÀÁ,¼ÄÐÀÁ¼ÄÐÀÁ…Ð(€äôÔÄ¸(´½ÉÉ•Ð…±°Ñ¡É•”ÍÁ¥¹”Á½Í¥Ñ¥½¹ÌÑ¼Ñ¡”É•…°½ÉÉ¥‘½ÉÌè]MP€ÈÈ¸Ô€ ÄÐÀÁ0¤°(€9QI€ÐÐ¸Ô€ ÄÐÀÁ¤°MP€àÄ€ ÄÐÀÁ¤¸AÉ•Ù¥½ÕÍ±ä€Èä¼Ðà¼ÜØ°Ý¡¥ ÁÕÐÑ¡”(€Ý•ÍÐÍÁ¥¹”¥¹Í¥‘”Ñ¡”Í•ÉÙ¥”½É”…¹Ñ¡”•…ÍÐÍÁ¥¹”¥¸½Á•¸™±½½È¸()I½½´Á½Í¥Ñ¥½¹Ì(´I”µµ•…ÍÕÉ”•Ù•ÉäÉ½½´……¥¹ÍÐÑ¡”Á±…¸¸Q¡”Ý•ÍÐÝ¥¹œÝ…ÌÑ¡”Ý½ÉÍÐè•Ù•¹±ä(€ÍÁ…•Ù…±Õ•Ì¡…Ñ¥±•Ì±…¹‘¥¹œ½¸Á…Ñ¥•¹ÐÑ½¥±•ÑÌ°…¹€ÄÈÈÝ…Ì€ØÁ½¥¹ÑÌ(€Í½ÕÑ ½˜¥ÑÌ…ÑÕ…°Á½Í¥Ñ¥½¸¸(´´´(ÍÉŒ½…ÍÍ•ÑÌ¼Å”µ™±½½ÉÁ±…¸¹Á¹œ€€€€€€€€€€€€€€€€ð	¥¸€ÐÀäÀÜÄ€´ø€ÌäÌÐÌÈ‰åÑ•Ì(ÍÉŒ½½µÁ½¹•¹ÑÌ½±½½ÉA±…¹ÕÉÉ•¹ÑMÑ…™™¥¹œ¹ÑÍàð€€€È€¬´(ÍÉŒ½½¹™¥œ½•½É…Á¡ä¹ÑÌ€€€€€€€€€€€€€€€€€€€€ð€€Øà€¬¬¬¬¬¬¬¬¬¬¬´´´´´´´´´(€Ì™¥±•Ì¡…¹•°€Ìà¥¹Í•ÉÑ¥½¹Ì ¬¤°€ÌÈ‘•±•Ñ¥½¹Ì ´¤()‘¥™˜€´µ¥Ð„½ÍÉŒ½½µÁ½¹•¹ÑÌ½±½½ÉA±…¹ÕÉÉ•¹ÑMÑ…™™¥¹œ¹ÑÍàˆ½ÍÉŒ½½µÁ½¹•¹ÑÌ½±½½ÉA±…¹ÕÉÉ•¹ÑMÑ…™™¥¹œ¹ÑÍà)¥¹‘•à€É”ÌÔåà¸¸ÄäÁˆàÍŒ€ÄÀÀØÐÐ(´´´„½ÍÉŒ½½µÁ½¹•¹ÑÌ½±½½ÉA±…¹ÕÉÉ•¹ÑMÑ…™™¥¹œ¹ÑÍà(¬¬¬ˆ½ÍÉŒ½½µÁ½¹•¹ÑÌ½±½½ÉA±…¹ÕÉÉ•¹ÑMÑ…™™¥¹œ¹ÑÍà) €´ÌÐÜ°Ü€¬ÌÐÜ°Ü •áÁ½ÉÐ½¹ÍÐ±½½ÉA±…¹ÕÉÉ•¹ÑMÑ…™™¥¹œèI•…Ð¹ñAÉ½ÁÌø€ô€¡ì(€€€€€€€€€€€ð½‘¥Øø(€(€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰™±•à©ÕÍÑ¥™äµ•¹Ñ•È‰œµÍ±…Ñ”´ÔÀ½Ù•É™±½Üµ¡¥‘‘•¸ˆø(´€€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰É•±…Ñ¥Ù”ˆÍÑå±”õíìÝ¥‘Ñ è€µ¥¸ ÄÀÀ”°…±Œ ØÉÙ €¨€Ä¸ÄàÐä¤¤œ°…ÍÁ•ÑI…Ñ¥¼è€œÄÌØÔ€¼€ÄÄÔÈœõôø(¬€€€€€€€€€€€€ñ‘¥Ø±…ÍÍ9…µ”ô‰É•±…Ñ¥Ù”ˆÍÑå±”õíìÝ¥‘Ñ è€µ¥¸ ÄÀÀ”°…±Œ ØÉÙ €¨€Ä¸ÈÀØÈ¤¤œ°…ÍÁ•ÑI…Ñ¥¼è€œÄÔØà€¼€ÄÌÀÀœõôø(€€€€€€€€€€€€€€€ñ¥µœÍÉŒõí™±½½ÉA±…¹%µ…•ô…±ÐôˆÄ…ÍÐ™±½½ÈÁ±…¸ˆ±…ÍÍ9…µ”ô‰…‰Í½±ÕÑ”¥¹Í•Ð´ÀÜµ™Õ±° µ™Õ±°½‰©•Ðµ½¹Ñ…¥¸½Á…¥Ñä´ÜÀˆ€¼ø(€€€€€€€€€€€€€€íÕÉÉ•¹ÑM¡¥™Ð¹É½½µÌ¹µ…À¡É½½´€ôøì(€€€€€€€€€€€€€€€€½¹ÍÐÁ½Ì€ôI==5}A=M%Q%=9MmÉ½½´¹É½½µ9Õµ‰•Étì)‘¥™˜€´µ¥Ð„½ÍÉŒ½½¹™¥œ½•½É…Á¡ä¹ÑÌˆ½ÍÉŒ½½¹™¥œ½•½É…Á¡ä¹ÑÌ)¥¹‘•à€ÀÔÑ„Ý”à¸¸Õ•„ÕÐÔ€ÄÀÀØÐÐ(´´´„½ÍÉŒ½½¹™¥œ½•½É…Á¡ä¹ÑÌ(¬¬¬ˆ½ÍÉŒ½½¹™¥œ½•½É…Á¡ä¹ÑÌ) €´ÈØ°ÌÌ€¬ÈØ°ÌÌ •áÁ½ÉÐÑåÁ”I½½µA½Í¥Ñ¥½¸€ôì±•™Ðè¹Õµ‰•ÈìÑ½Àè¹Õµ‰•Èôì(€€¨Q¡•Í”…É”Ñ¡”½½É‘¥¹…Ñ•ÌÑ¡”µ…ÀÉ•¹‘•ÉÌÝ¥Ñ ƒŠP‘¼¹½Ð™½É¬Ñ¡¥ÌÑ…‰±”¸(€€¨¼(•áÁ½ÉÐ½¹ÍÐI==5}A=M%Q%=9LèI•½ÉñÍÑÉ¥¹œ°I½½µA½Í¥Ñ¥½¸ø€ôì(´€€¼¼…ÍÐÝ¥¹œ€ ÄÀÄ´ÄÀØ¤°ÉÕ¹¹¥¹œ€ÄÀØ¹½ÉÑ ƒŠH€ÄÀÄÍ½ÕÑ (´€€œÄÀÄœèì±•™Ðè€àÔ¸È°Ñ½Àè€àà¸Ôô°(´€€œÄÀÈœèì±•™Ðè€àÔ¸È°Ñ½Àè€ÜÐ¸Èô°(´€€œÄÀÌœèì±•™Ðè€àÔ¸È°Ñ½Àè€ØÄ¸Ðô°(´€€œÄÀÐœèì±•™Ðè€àÔ¸È°Ñ½Àè€Ðà¸Àô°(´€€œÄÀÔœèì±•™Ðè€àÔ¸È°Ñ½Àè€ÌÔ¸Ôô°(´€€œÄÀØœèì±•™Ðè€àÔ¸È°Ñ½Àè€ÄÜ¸Ðô°(´(´€€¼¼•¹ÑÉ…°Á½‘Ìè€ÄÀÜ´ÄÀä¹½ÉÑ ½˜Ñ¡”½É”°€ÄÄÀ´ÄÄÌÍ½ÕÑ ½˜Ñ¡”½É”(´€€œÄÀÜœèì±•™Ðè€ÔÜ°Ñ½Àè€ÈÐ¸Àô°(´€€œÄÀàœèì±•™Ðè€ÔÜ°Ñ½Àè€ÌÐ¸Àô°(´€€œÄÀäœèì±•™Ðè€ÔÜ°Ñ½Àè€ÐÐ¸Àô°(´€€œÄÄÀœèì±•™Ðè€ÔÜ°Ñ½Àè€Ôà¸àô°(´€€œÄÄÄœèì±•™Ðè€ÔÜ°Ñ½Àè€Øà¸àô°(´€€œÄÄÈœèì±•™Ðè€ÔÜ°Ñ½Àè€Üà¸àô°(´€€œÄÄÌœèì±•™Ðè€ÔÜ°Ñ½Àè€àà¸Øô°(´(´€€¼¼]•ÍÐÝ¥¹œ€ ÄÄÐ´ÄÈÈ¤°ÉÕ¹¹¥¹œ€ÄÈÈ¹½ÉÑ ƒŠH€ÄÄÐÍ½ÕÑ (´€€œÄÄÐœèì±•™Ðè€ÄÜ¸È°Ñ½Àè€àà¸Ðô°(´€€œÄÄÔœèì±•™Ðè€ÄÜ¸È°Ñ½Àè€Üà¸Èô°(´€€œÄÄØœèì±•™Ðè€ÄÜ¸È°Ñ½Àè€Øà¸Ðô°(´€€œÄÄÜœèì±•™Ðè€ÄÜ¸È°Ñ½Àè€Ôä¸Àô°(´€€œÄÄàœèì±•™Ðè€ÄÜ¸È°Ñ½Àè€ÔÀ¸Ðô°(´€€œÄÄäœèì±•™Ðè€ÄÜ¸È°Ñ½Àè€ÐÀ¸Üô°(´€€œÄÈÀœèì±•™Ðè€ÄÜ¸È°Ñ½Àè€ÌÌ¸Àô°(´€€œÄÈÄœèì±•™Ðè€ÄÜ¸È°Ñ½Àè€ÈÐ¸Àô°(´€€œÄÈÈœèì±•™Ðè€ÄÜ¸È°Ñ½Àè€ÄÐ¸àô°(¬€€¼¼…ÍÐÝ¥¹œ€ ÄÀÄ´ÄÀØ¤°ÉÕ¹¹¥¹œ€ÄÀØ¹½ÉÑ €´ø€ÄÀÄÍ½ÕÑ ¸(¬€€œÄÀÄœèì±•™Ðè€àà°Ñ½Àè€àäô°(¬€€œÄÀÈœèì±•™Ðè€àà°Ñ½Àè€ÜØô°(¬€€œÄÀÌœèì±•™Ðè€àà°Ñ½Àè€ØÐô°(¬€€œÄÀÐœèì±•™Ðè€àà°Ñ½Àè€ÐÔô°(¬€€œÄÀÔœèì±•™Ðè€àà°Ñ½Àè€ÌÌô°(¬€€œÄÀØœèì±•™Ðè€àà°Ñ½Àè€Äàô°(¬(¬€€¼¼•¹ÑÉ…°Á½‘Ìè€ÄÀÜ´ÄÀä¹½ÉÑ ½˜Ñ¡”½É”°€ÄÄÀ´ÄÄÌÍ½ÕÑ ½˜¥Ð¸(¬€€œÄÀÜœèì±•™Ðè€ÔÜ°Ñ½Àè€ÈÄô°(¬€€œÄÀàœèì±•™Ðè€ÔÜ°Ñ½Àè€ÌÈô°(¬€€œÄÀäœèì±•™Ðè€ÔÜ°Ñ½Àè€ÐÄô°(¬€€œÄÄÀœèì±•™Ðè€ÔÜ°Ñ½Àè€Ôäô°(¬€€œÄÄÄœèì±•™Ðè€ÔÜ°Ñ½Àè€Øàô°(¬€€œÄÄÈœèì±•™Ðè€ÔÜ°Ñ½Àè€Üäô°(¬€€œÄÄÌœèì±•™Ðè€ÔÜ°Ñ½Àè€äÀô°(¬(¬€€¼¼]•ÍÐÝ¥¹œ€ ÄÄÐ´ÄÈÈ¤°ÉÕ¹¹¥¹œ€ÄÈÈ¹½ÉÑ €´ø€ÄÄÐÍ½ÕÑ ¸(¬€€œÄÄÐœèì±•™Ðè€ÄÜ°Ñ½Àè€äÄô°(¬€€œÄÄÔœèì±•™Ðè€ÄÌ°Ñ½Àè€Üäô°(¬€€œÄÄØœèì±•™Ðè€ÄÌ°Ñ½Àè€ÜÀô°(¬€€œÄÄÜœèì±•™Ðè€ÄÌ°Ñ½Àè€ØÀô°(¬€€œÄÄàœèì±•™Ðè€ÄÌ°Ñ½Àè€ÔÈô°(¬€€œÄÄäœèì±•™Ðè€ÄÜ°Ñ½Àè€ÐÈô°(¬€€œÄÈÀœèì±•™Ðè€ÄÜ°Ñ½Àè€ÌÌô°(¬€€œÄÈÄœèì±•™Ðè€ÄÌ°Ñ½Àè€ÈÄô°(¬€€œÄÈÈœèì±•™Ðè€ÄÌ°Ñ½Àè€äô°(ôì(€(•áÁ½ÉÐ½¹ÍÐ11}I==5L€ô=‰©•Ð¹­•åÌ¡I==5}A=M%Q%=9L¤ì) €´Øä°Ü€¬Øä°Ü •áÁ½ÉÐ½¹ÍÐ11}I==5L€ô=‰©•Ð¹­•åÌ¡I==5}A=M%Q%=9L¤ì(€€¨…É½ÍÌÑ¡”Í½ÕÑ •¹¸Q¡…ÐÍ¥¹±”™…Ð¥ÌÝ¡…Ðµ…­•Ì€ÄÀÌ¬ÄÄÌ…¹€ÄÀÐ¬ÄÄÐ(€€¨•áÁ•¹Í¥Ù”ƒŠPÝ¥Ñ¡½ÕÐ…¹äÉ½½´µ¹Õµ‰•ÈÉÕ±”•á¥ÍÑ¥¹œ…¹åÝ¡•É”¸(€€¨¼(µ½¹ÍÐMA%9}`€ôìMPè€ÜØ°9QIè€Ðà°]MPè€Èäô…Ì½¹ÍÐì(­½¹ÍÐMA%9}`€ôìMPè€àÄ°9QIè€ÐÐ¸Ô°]MPè€ÈÈ¸Ôô…Ì½¹ÍÐì(ÑåÁ”MÁ¥¹•-•ä€ô­•å½˜ÑåÁ•½˜MA%9}`ì(€(€¼¨¨½½ÈµÑ¼µ½ÉÉ¥‘½ÈÍÑÕˆ½ÍÐ¸Mµ…±°èÑ¡”‘½½È½Á•¹Ì½¹Ñ¼Ñ¡”½ÉÉ¥‘½È¸€¨¼) €´ÜÜ°ä€¬ÜÜ°ÄÔ ½¹ÍÐMQU€ô€Èì(€(€¼¨¨…ÍÐµÝ•ÍÐ½ÉÉ¥‘½ÉÌèäÁ½Í¥Ñ¥½¸°…¹Ý¡¥ ÍÁ¥¹•Ì•… …ÑÕ…±±ä±¥¹­Ì¸€¨¼(½¹ÍÐI=MM}=II%=ILèìäè¹Õµ‰•ÈìÍÁ¥¹•ÌèMÁ¥¹•-•åmtõmt€ôl(´€ìäè€ÄÀ°ÍÁ¥¹•Ìèl]MPœ°€9QItô°€€€€€€€€€€¼¼¹½ÉÑ •¹½˜Ñ¡”Õ¹¥Ð(´€ìäè€ÔÈ°ÍÁ¥¹•Ìèl]MPœ°€9QIœ°€MPtô°€€¼¼µ…¥¸µ¥½ÉÉ¥‘½ÈÁ…ÍÐÑ¡”½É”(´€ìäè€äÐ°ÍÁ¥¹•Ìèl]MPœ°€9QIœ°€MPtô°€€¼¼Í½ÕÑ ½ÉÉ¥‘½ÈÁ…ÍÐÑ¡”¹ÕÉÍ”ÍÑ…Ñ¥½¸(¬€€¼¼½ÉÉ¥‘½È€ÄÐÀÁ,€¼€ÄÐÀÁ€¼€ÄÐÀÁ¸Q¡”½¹”Á±…”Ñ¡”•…ÍÐÝ¥¹œ©½¥¹ÌÑ¡”(¬€€¼¼Õ¹¥ÐèÁ…ÍÐÑ¡”¹ÕÉÍ”½É”°Õ¹‘•ÈÑ¡”½ÕÉÑå…É°¥¹Ñ¼½ÉÉ¥‘½È€ÄÐÀÁ¸(¬€ìäè€ÔÄ°ÍÁ¥¹•Ìèl]MPœ°€9QIœ°€MPtô°(¬€€¼¼9ÕÉÍ”ÍÑ…Ñ¥½¸€ÄÐÐÀ…¹…±½Ù•Ì€ÄÐÀÁ €¼€ÄÐÀÁ(¸MÑ½ÁÌ…ÐÑ¡”€ÄÄÀ´ÄÄÌ‰±½¬ì(¬€€¼¼Ñ¡”•…ÍÐÝ¥¹œÉÕ¹ÌÑ¼Ñ¡”Í½ÕÑ •áÑ•É¥½ÈÝ…±°Ý¥Ñ ¹¼½Á•¹¥¹œÝ•ÍÑÝ…É¸(¬€ìäè€äÀ°ÍÁ¥¹•Ìèl]MPœ°€9QItô°(¬€€¼¼9=QèÑ¡•É”¥Ì‘•±¥‰•É…Ñ•±ä¹¼¹½ÉÑ É½ÍÌ½ÉÉ¥‘½È¸Õ•ÍÐ1½Õ¹”€ÄÐÈÀ(¬€€¼¼½ÕÁ¥•ÌÑ¡”™Õ±°Ý¥‘Ñ ‰•ÑÝ••¸½ÉÉ¥‘½È€ÄÐÀÁ0…¹Ñ¡”€ÄÀÜ´ÄÀäÁ½°Í¼(¬€€¼¼€ÄÈÈ…¹€ÄÀÜ…É”¹½ÐÑ¡”Í¡½ÉÐ¡½ÀÑ¡•¥Èµ…ÀÁ½Í¥Ñ¥½¹ÌÍÕ•ÍÐ¸(tì(€(½¹ÍÐÍÁ¥¹•½ÉI½½´€ô€¡É½½µ9Õµ‰•ÈèÍÑÉ¥¹œ¤èMÁ¥¹•-•ä€ôøì(´´€(È¸ÐÌ¸À
