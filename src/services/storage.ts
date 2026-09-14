@@ -7,6 +7,8 @@ import {
   CurrentShiftState,
   OperationalEvent,
   PlanBaseline,
+  MTCoverageState,
+  PCTCoverageState,
 } from '../types';
 
 const ROSTER_KEY = '1E_STAFF_ROSTER';
@@ -17,9 +19,27 @@ const FORECAST_KEY = '1E_FORECAST_EVENTS';
 const CURRENT_SHIFT_KEY = '1E_LIVE_CURRENT_SHIFT';
 const OPERATIONAL_EVENTS_KEY = '1E_OPERATIONAL_EVENTS';
 const PLAN_BASELINE_KEY = '1E_PLAN_BASELINE';
+const CURRENT_MRS_KEY = '1E_CURRENT_MRS_INPUT';
+const PROJECTED_MRS_KEY = '1E_PROJECTED_MRS_INPUT';
+const PLAN_DATE_KEY = '1E_PLAN_DATE';
+const SHIFT_KEY = '1E_SHIFT_TYPE';
+const PLAN_SOURCE_KEY = '1E_PLAN_SOURCE_SHIFT';
+const PM_ONCALL_KEY = '1E_NEXT_DAY_PM_ONCALL';
+const PLAN_MT_STATE_KEY = '1E_PLAN_MT_STATE';
+const PLAN_PCT_STATE_KEY = '1E_PLAN_PCT_STATE';
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+const safeParse = <T,>(raw: string | null, fallback: T): T => {
+  if (!raw) return clone(fallback);
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return clone(fallback);
+  }
+};
 const normalizeName = (value: string) => value.trim().toLowerCase().replace(/\s+/g, ' ');
+const localIsoDate = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const shiftOrdinal = (date: string, shiftType: 'Day'|'Night') => {
   const day = Math.floor(new Date(`${date}T12:00:00`).getTime() / 86400000);
   return day * 2 + (shiftType === 'Night' ? 1 : 0);
@@ -79,35 +99,38 @@ export const INITIAL_FORECAST: ForecastEvent[] = [
 
 export const INITIAL_HISTORY: FinalizedShiftSnapshot[] = [];
 
-const defaultCurrentShift = (): CurrentShiftState => ({
-  date: new Date().toISOString().slice(0, 10),
-  shiftType: new Date().getHours() >= 19 || new Date().getHours() < 7 ? 'Night' : 'Day',
-  roster: clone(INITIAL_STAFF),
-  rooms: clone(INITIAL_ROOMS),
-  mtState: 'MT_PRESENT',
-  pctState: 'PCT_PRESENT',
-  onCall: clone(INITIAL_ONCALL),
-  lastUpdatedAt: new Date().toISOString(),
-});
+const defaultCurrentShift = (): CurrentShiftState => {
+  const now = new Date();
+  return {
+    date: localIsoDate(now),
+    shiftType: now.getHours() >= 19 || now.getHours() < 7 ? 'Night' : 'Day',
+    roster: clone(INITIAL_STAFF),
+    rooms: clone(INITIAL_ROOMS),
+    mtState: 'MT_PRESENT',
+    pctState: 'PCT_PRESENT',
+    onCall: clone(INITIAL_ONCALL),
+    lastUpdatedAt: now.toISOString(),
+  };
+};
 
 export const StorageService = {
-  loadStaff(): NurseStaff[] { const raw = localStorage.getItem(ROSTER_KEY); return raw ? JSON.parse(raw) : clone(INITIAL_STAFF); },
+  loadStaff(): NurseStaff[] { return safeParse(localStorage.getItem(ROSTER_KEY), INITIAL_STAFF); },
   saveStaff(staff: NurseStaff[]): void { localStorage.setItem(ROSTER_KEY, JSON.stringify(staff)); },
-  loadRooms(): PatientRoom[] { const raw = localStorage.getItem(ROOMS_KEY); return raw ? JSON.parse(raw) : clone(INITIAL_ROOMS); },
+  loadRooms(): PatientRoom[] { return safeParse(localStorage.getItem(ROOMS_KEY), INITIAL_ROOMS); },
   saveRooms(rooms: PatientRoom[]): void { localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms)); },
-  loadOnCall(): OnCallProviders { const raw = localStorage.getItem(ONCALL_KEY); return raw ? JSON.parse(raw) : clone(INITIAL_ONCALL); },
+  loadOnCall(): OnCallProviders { return safeParse(localStorage.getItem(ONCALL_KEY), INITIAL_ONCALL); },
   saveOnCall(onCall: OnCallProviders): void { localStorage.setItem(ONCALL_KEY, JSON.stringify(onCall)); },
-  loadHistory(): FinalizedShiftSnapshot[] { const raw = localStorage.getItem(HISTORY_KEY); return raw ? JSON.parse(raw) : clone(INITIAL_HISTORY); },
+  loadHistory(): FinalizedShiftSnapshot[] { return safeParse(localStorage.getItem(HISTORY_KEY), INITIAL_HISTORY); },
   saveFinalizedShift(snapshot: FinalizedShiftSnapshot): void {
     const history = this.loadHistory().filter(s => !(s.date === snapshot.date && s.shiftType === snapshot.shiftType));
     history.unshift(snapshot);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 60)));
   },
-  loadForecast(): ForecastEvent[] { const raw = localStorage.getItem(FORECAST_KEY); return raw ? JSON.parse(raw) : clone(INITIAL_FORECAST); },
+  loadForecast(): ForecastEvent[] { return safeParse(localStorage.getItem(FORECAST_KEY), INITIAL_FORECAST); },
   saveForecast(events: ForecastEvent[]): void { localStorage.setItem(FORECAST_KEY, JSON.stringify(events)); },
   savePlanBaseline(snapshot: PlanBaseline): void { localStorage.setItem(PLAN_BASELINE_KEY, JSON.stringify(snapshot)); },
-  loadPlanBaseline(): PlanBaseline | null { const raw = localStorage.getItem(PLAN_BASELINE_KEY); return raw ? JSON.parse(raw) : null; },
-  loadCurrentShift(): CurrentShiftState { const raw = localStorage.getItem(CURRENT_SHIFT_KEY); return raw ? JSON.parse(raw) : defaultCurrentShift(); },
+  loadPlanBaseline(): PlanBaseline | null { return safeParse<PlanBaseline | null>(localStorage.getItem(PLAN_BASELINE_KEY), null); },
+  loadCurrentShift(): CurrentShiftState { return safeParse(localStorage.getItem(CURRENT_SHIFT_KEY), defaultCurrentShift()); },
   saveCurrentShift(state: CurrentShiftState): void { localStorage.setItem(CURRENT_SHIFT_KEY, JSON.stringify({ ...state, lastUpdatedAt: new Date().toISOString() })); },
   startCurrentShiftFromPlan(plan: PlanBaseline): CurrentShiftState {
     const state: CurrentShiftState = { date: plan.date, shiftType: plan.shiftType, roster: clone(plan.roster), rooms: clone(plan.rooms), mtState: plan.mtState, pctState: plan.pctState, onCall: clone(plan.onCall), lastUpdatedAt: new Date().toISOString() };
@@ -115,9 +138,47 @@ export const StorageService = {
     this.appendOperationalEvent({ id: `evt-${Date.now()}`, timestamp: new Date().toISOString(), shiftDate: state.date, shiftType: state.shiftType, type: 'SHIFT_STARTED', summary: 'Current staffing initialized from saved plan baseline.' });
     return state;
   },
-  loadOperationalEvents(): OperationalEvent[] { const raw = localStorage.getItem(OPERATIONAL_EVENTS_KEY); return raw ? JSON.parse(raw) : []; },
+  loadOperationalEvents(): OperationalEvent[] { return safeParse(localStorage.getItem(OPERATIONAL_EVENTS_KEY), [] as OperationalEvent[]); },
   appendOperationalEvent(event: OperationalEvent): void { const events = this.loadOperationalEvents(); events.unshift(event); localStorage.setItem(OPERATIONAL_EVENTS_KEY, JSON.stringify(events.slice(0, 300))); },
-  resetToDefaults(): void { [ROSTER_KEY, ROOMS_KEY, ONCALL_KEY, HISTORY_KEY, FORECAST_KEY, CURRENT_SHIFT_KEY, OPERATIONAL_EVENTS_KEY, PLAN_BASELINE_KEY].forEach(key => localStorage.removeItem(key)); },
+
+  loadPlanDate(fallback: string): string { return localStorage.getItem(PLAN_DATE_KEY) || fallback; },
+  savePlanDate(value: string): void { localStorage.setItem(PLAN_DATE_KEY, value); },
+  loadShiftType(): 'Day' | 'Night' { const raw = localStorage.getItem(SHIFT_KEY); return raw === 'Night' ? 'Night' : 'Day'; },
+  saveShiftType(value: 'Day' | 'Night'): void { localStorage.setItem(SHIFT_KEY, value); },
+  loadCurrentMrs(fallback: number): number { const value = Number(localStorage.getItem(CURRENT_MRS_KEY)); return Number.isFinite(value) && value > 0 ? value : fallback; },
+  saveCurrentMrs(value: number): void { localStorage.setItem(CURRENT_MRS_KEY, String(value)); },
+  loadProjectedMrs(fallback: number): number { const value = Number(localStorage.getItem(PROJECTED_MRS_KEY)); return Number.isFinite(value) && value > 0 ? value : fallback; },
+  saveProjectedMrs(value: number): void { localStorage.setItem(PROJECTED_MRS_KEY, String(value)); },
+  loadPlanSource(): string | null { return localStorage.getItem(PLAN_SOURCE_KEY); },
+  savePlanSource(value: string): void { localStorage.setItem(PLAN_SOURCE_KEY, value); },
+  clearPlanSource(): void { localStorage.removeItem(PLAN_SOURCE_KEY); },
+  loadPmOnCall(): OnCallProviders { return safeParse(localStorage.getItem(PM_ONCALL_KEY), { intensivist:'', cardiothoracic:'', acuteMI:'', cardiology:'', hospitalist:'' }); },
+  savePmOnCall(value: OnCallProviders): void { localStorage.setItem(PM_ONCALL_KEY, JSON.stringify(value)); },
+  loadPlanMtState(): MTCoverageState { const raw = localStorage.getItem(PLAN_MT_STATE_KEY); return raw === 'RN_COVERING_MT' || raw === 'MT_UNFILLED' ? raw : 'MT_PRESENT'; },
+  savePlanMtState(value: MTCoverageState): void { localStorage.setItem(PLAN_MT_STATE_KEY, value); },
+  loadPlanPctState(): PCTCoverageState { return localStorage.getItem(PLAN_PCT_STATE_KEY) === 'PCT_NONE' ? 'PCT_NONE' : 'PCT_PRESENT'; },
+  savePlanPctState(value: PCTCoverageState): void { localStorage.setItem(PLAN_PCT_STATE_KEY, value); },
+
+  resetToDefaults(): void {
+    [
+      ROSTER_KEY,
+      ROOMS_KEY,
+      ONCALL_KEY,
+      HISTORY_KEY,
+      FORECAST_KEY,
+      CURRENT_SHIFT_KEY,
+      OPERATIONAL_EVENTS_KEY,
+      PLAN_BASELINE_KEY,
+      CURRENT_MRS_KEY,
+      PROJECTED_MRS_KEY,
+      PLAN_DATE_KEY,
+      SHIFT_KEY,
+      PLAN_SOURCE_KEY,
+      PM_ONCALL_KEY,
+      PLAN_MT_STATE_KEY,
+      PLAN_PCT_STATE_KEY,
+    ].forEach(key => localStorage.removeItem(key));
+  },
   findContinuity(patientStayId: string, currentRoster: NurseStaff[], targetDate?: string, targetShift?: 'Day'|'Night'): { nurseId: string; nurseName: string; daysAgo: number } | null {
     if (!patientStayId) return null;
     let history = this.loadHistory();
