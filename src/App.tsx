@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AssignmentWarning, CurrentShiftState, FinalizedShiftSnapshot, ForecastEvent, NurseStaff, OperationalEvent, PatientRoom, PlanBaseline, PlanningWorkspace } from './types';
 import { StorageService } from './services/storage';
 import { operationalRepository } from './services/repository';
@@ -59,7 +59,7 @@ export const App:React.FC=()=>{
    return next;
  });
  const currentStatus=getMRSStatus(currentMRS),projectedStatus=getMRSStatus(projectedMRS),plannedCensus=rooms.filter(r=>r.isOccupied).length,currentCensus=currentShift.rooms.filter(r=>r.isOccupied).length,currentActiveRNs=currentShift.roster.filter(s=>['RN','Preceptor'].includes(s.role)&&['ACTIVE','RECALLED'].includes(s.staffStatus)).length;
- const supportRisk=useMemo(()=>{const a:string[]=[];if(currentShift.mtState==='MT_UNFILLED')a.push('MT unfilled');if(currentShift.mtState==='RN_COVERING_MT')a.push('RN covering MT');if(currentShift.pctState==='PCT_NONE')a.push('No PCT');return a},[currentShift.mtState,currentShift.pctState]);
+ const supportRisk:string[]=[];if(currentShift.mtState==='MT_UNFILLED')supportRisk.push('MT unfilled');if(currentShift.mtState==='RN_COVERING_MT')supportRisk.push('RN covering MT');if(currentShift.pctState==='PCT_NONE')supportRisk.push('No PCT');
  const saveRoster=(u:NurseStaff[])=>updatePlanningWorkspace({roster:u});
  const saveRooms=(u:PatientRoom[])=>updatePlanningWorkspace({rooms:u});
  const savePlanBaseline=()=>{const b:PlanBaseline={id:`plan-${Date.now()}`,date,shiftType,finalizedAt:new Date().toISOString(),savedAt:new Date().toISOString(),roster,rooms,onCall,pmOnCall,fitScore,warnings,mtState,pctState,currentMRS,projectedMRS};StorageService.savePlanBaseline(b);setPlanBaseline(b);window.alert('Next Shift Plan saved as baseline, including AM and PM on-call coverage.')};
