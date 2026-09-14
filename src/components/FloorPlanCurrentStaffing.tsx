@@ -73,6 +73,23 @@ const FLAG_TINT: Partial<Record<ComplexityFlag, string>> = {
   BLOCKED: 'text-slate-900',
 };
 
+/*
+ * Phone layout: the floor plan is positioned by percentage, so below about
+ * 1024px the tiles overlap into an unreadable pile. Instead we draw the three
+ * wings as columns, in true north-to-south order taken from ROOM_POSITIONS.
+ * Geography is preserved (which wing, which end of it); only the drawing goes.
+ */
+const WINGS: { label: string; rooms: string[] }[] = [
+  { label: 'West wing', rooms: [] },
+  { label: 'Central', rooms: [] },
+  { label: 'East wing', rooms: [] },
+];
+Object.keys(ROOM_POSITIONS).forEach(r => {
+  const n = Number(r);
+  WINGS[n <= 106 ? 2 : n <= 113 ? 1 : 0].rooms.push(r);
+});
+WINGS.forEach(w => w.rooms.sort((a, b) => ROOM_POSITIONS[a].top - ROOM_POSITIONS[b].top));
+
 const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
 
 const linkedPartner = (staff: NurseStaff, roster: NurseStaff[]) =>
@@ -110,12 +127,14 @@ const withFlagToggled = (room: PatientRoom, flag: ComplexityFlag): PatientRoom =
   return { ...room, flags };
 };
 
-const roomFlagIcons = (r: PatientRoom) => {
+const roomFlagIcons = (r: PatientRoom, inline = false) => {
   const items = FLAGS.filter(({ flag }) => flag !== 'Discharge' && roomHasFlag(r, flag));
   if (!items.length) return null;
   return (
-    <span className="absolute left-full ml-1 top-1/2 -translate-y-1/2 flex flex-col gap-0.5 pointer-events-none">
-      {items.slice(0, 5).map(({ flag, icon }) => (
+    <span className={inline
+      ? 'flex gap-0.5 pointer-events-none'
+      : 'absolute left-full ml-1 top-1/2 -translate-y-1/2 flex flex-col gap-0.5 pointer-events-none'}>
+      {items.slice(0, inline ? 3 : 5).map(({ flag, icon }) => (
         <span key={flag} title={flag} className={`w-4 h-4 rounded bg-white/95 border shadow-sm flex items-center justify-center [&>svg]:w-2.5 [&>svg]:h-2.5 ${FLAG_TINT[flag] || 'text-slate-700'}`}>
           {icon}
         </span>
@@ -279,7 +298,7 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
       <section className="min-w-0 space-y-1.5">
         {/* Rapid coding strip — available on every board, not just planning. */}
         <div className="bg-white border rounded-xl px-2 py-1.5">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className={isNarrow ? "flex items-center gap-x-3 overflow-x-auto pb-1 [&>div]:shrink-0 [&_button]:shrink-0" : "flex flex-wrap items-center gap-x-3 gap-y-1"}>
             <div className="flex items-center gap-1">
               <span className="text-[9px] font-black uppercase text-slate-500 mr-0.5">Acuity</span>
               {ACUITIES.map(a => (
@@ -302,7 +321,7 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
               ))}
             </div>
 
-            <div className="flex items-center gap-1 flex-wrap">
+            <div className={isNarrow ? "flex items-center gap-1" : "flex items-center gap-1 flex-wrap"}>
               <span className="text-[9px] font-black uppercase text-slate-500 mr-0.5">Flag</span>
               {visibleFlags.map(({ flag, short, icon }) => (
                 <button
@@ -346,7 +365,7 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
         <div className="bg-white border rounded-xl overflow-hidden">
           <div className="px-3 py-1.5 border-b">
             <div className={`rounded-lg border px-2 py-1.5 ${unassigned.length ? 'bg-rose-50 border-rose-300' : 'bg-emerald-50 border-emerald-300'}`}>
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className={isNarrow ? "flex items-center gap-2 overflow-x-auto [&>*]:shrink-0" : "flex items-center gap-2 flex-wrap"}>
                 <div className={`text-[11px] font-black uppercase ${unassigned.length ? 'text-rose-800' : 'text-emerald-800'}`}>
                   Needs Assignment — {unassigned.length}
                 </div>
@@ -362,6 +381,46 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
             </div>
           </div>
 
+          {isNarrow ? (
+          <div className="grid grid-cols-3 gap-1.5 p-2 bg-slate-50">
+            {WINGS.map(wing => (
+              <div key={wing.label}>
+                <div className="text-[9px] font-black uppercase text-slate-400 text-center pb-1">{wing.label}</div>
+                <div className="space-y-1">
+                  {wing.rooms.map(roomNumber => {
+                    const room = currentShift.rooms.find(r => r.roomNumber === roomNumber);
+                    if (!room) return null;
+                    const nurse = currentShift.roster.find(x => x.id === room.assignedNurseId);
+                    const needsRn = room.isOccupied && !room.assignedNurseId;
+                    const acuityMissing = room.isOccupied && room.acuityConfirmed === false;
+                    const tone = !room.isOccupied
+                      ? 'bg-white border-slate-300 text-slate-400'
+                      : acuityMissing ? 'bg-amber-100 border-amber-500 text-amber-950'
+                      : ACUITY_STYLES[room.acuity].room;
+                    return (
+                      <button key={roomNumber} onClick={() => roomClick(room)}
+                        className={`w-full rounded-lg border-2 px-1 py-1.5 text-center ${tone}
+                          ${needsRn ? 'ring-2 ring-rose-500' : ''}
+                          ${room.assignedNurseId === manualStaffId && manualStaffId ? 'ring-2 ring-indigo-500' : ''}
+                          ${room.roomNumber === selectedRoom?.roomNumber ? 'ring-2 ring-slate-900' : ''}`}>
+                        <div className="font-black text-base leading-none">
+                          {room.roomNumber}{room.isOccupied && room.assignedNurseId ? ' ✓' : ''}
+                        </div>
+                        <div className="text-[9px] font-bold leading-tight">
+                          {room.isOccupied ? (acuityMissing ? 'ACUITY?' : room.acuity) : 'empty'}
+                        </div>
+                        <div className={`text-[9px] leading-tight truncate ${needsRn ? 'font-black text-rose-800' : ''}`}>
+                          {room.isOccupied ? (nurse ? firstName(nurse.name) : 'no RN') : '\u00A0'}
+                        </div>
+                        <div className="flex justify-center gap-0.5 min-h-[10px]">{roomFlagIcons(room, true)}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          ) : (
           <div className="flex justify-center bg-slate-50 overflow-hidden">
             <div className="relative" style={{ width: 'min(100%, calc(62vh * 1.2062))', aspectRatio: '1568 / 1300' }}>
               <img src={floorPlanImage} alt="1 East floor plan" className="absolute inset-0 w-full h-full object-contain opacity-70" />
@@ -402,10 +461,11 @@ export const FloorPlanCurrentStaffing: React.FC<Props> = ({
               })}
             </div>
           </div>
+          )}
 
-          <div className="px-3 py-1 border-t text-[10px] text-slate-500 flex justify-between">
-            <span>Tap a room to open it. Select a nurse first to assign instead. Positions come from the 1 East floor plan.</span>
-            <button onClick={() => setDetailOpen(true)} className="font-bold text-slate-700 underline">Open room {selectedRoom?.roomNumber}</button>
+          <div className="px-3 py-1 border-t text-[10px] text-slate-500 flex justify-between gap-2">
+            <span>{isNarrow ? 'Tap a room to open it. Pick a nurse first to assign.' : 'Tap a room to open it. Select a nurse first to assign instead. Positions come from the 1 East floor plan.'}</span>
+            <button onClick={() => setDetailOpen(true)} className="font-bold text-slate-700 underline whitespace-nowrap">Open {selectedRoom?.roomNumber}</button>
           </div>
         </div>
       </section>
