@@ -30,7 +30,7 @@ export const createMsalGraphTokenProvider = async (config: MsalGraphAuthConfig):
 
   await app.initialize();
   const redirectResult = await app.handleRedirectPromise();
-  let account: AccountInfo | null = redirectResult?.account || app.getAllAccounts()[0] || null;
+  let account: AccountInfo | undefined = redirectResult?.account || app.getAllAccounts()[0] || undefined;
 
   if (!account) {
     await app.loginRedirect({ scopes: config.scopes });
