@@ -12,6 +12,23 @@ The application remains advisory. Charge Nurse judgment and hospital staffing/cl
 
 V1 uses browser `localStorage`. Do not enter patient names, MRNs, DOBs, or other patient identifiers. The optional stay token is non-PHI and exists only to support continuity testing.
 
+## Geography model
+
+Room positions and walking distance share one source of truth in
+`src/config/geography.ts`. A corridor graph is built from the floor-plan
+coordinates and searched with Dijkstra, so `walkingDistance('103','113')`
+answers "how far does this nurse actually walk" rather than "are these rooms in
+the same hall".
+
+Geographic quality is scored from `GEOGRAPHY_BANDS`. Tune those four numbers —
+never room-number lists. There are no hard-coded good/bad room pairs anywhere in
+the engine any more.
+
+```bash
+npm run check:geo      # distance matrix + the CN's known good/bad pairings
+npm run check:engine   # full assignment run, Auto vs Semi-Auto vs locked
+```
+
 ## Floor-plan asset
 
 The canonical binary floor-plan image is committed at:

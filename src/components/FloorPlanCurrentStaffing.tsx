@@ -1,48 +1,462 @@
 import React, { useMemo, useState } from 'react';
-import { Activity, AlertTriangle, Ban, Brain, CircleDot, Droplets, HeartPulse, Home, LogIn, LogOut, MoveRight, RotateCcw, ShieldAlert, Users, Wind, X } from 'lucide-react';
+import {
+  Activity, AlertTriangle, Ban, Brain, ChevronDown, CircleDot, Droplets, HeartPulse, Home,
+  Lock, LogIn, LogOut, MoveRight, ShieldAlert, Unlock, Users, Wind, X,
+} from 'lucide-react';
 import floorPlanImage from '../assets/1e-floorplan.png';
+import { ROOM_POSITIONS } from '../config/geography';
 import { AcuityLevel, ComplexityFlag, CurrentShiftState, NurseStaff, PatientRoom, StaffStatus } from '../types';
-import { RapidRoomTools } from './RapidRoomTools';
 
-interface Props { currentShift: CurrentShiftState; onRoomChange: (room: PatientRoom) => void; onAssignRoom: (roomNumber: string, nurseId: string | null) => void; onStaffStatusChange: (staff: NurseStaff, status: StaffStatus) => void; onRecallPrevious: () => void; quickMode?: boolean; }
-type RoomPosition = { left: number; top: number };
-const ROOM_POSITIONS: Record<string, RoomPosition> = {
- '101':{left:85.2,top:88.5},'102':{left:85.2,top:74.2},'103':{left:85.2,top:61.4},'104':{left:85.2,top:48},'105':{left:85.2,top:35.5},'106':{left:85.2,top:17.4},
- '107':{left:57,top:24},'108':{left:57,top:34},'109':{left:57,top:44},'110':{left:57,top:58.8},'111':{left:57,top:68.8},'112':{left:57,top:78.8},'113':{left:57,top:88.6},
- '114':{left:17.2,top:88.4},'115':{left:17.2,top:78.2},'116':{left:17.2,top:68.4},'117':{left:17.2,top:59},'118':{left:17.2,top:50.4},'119':{left:17.2,top:40.7},'120':{left:17.2,top:33},'121':{left:17.2,top:24},'122':{left:17.2,top:14.8},
+interface Props {
+  currentShift: CurrentShiftState;
+  onRoomChange: (room: PatientRoom) => void;
+  onAssignRoom: (roomNumber: string, nurseId: string | null) => void;
+  onStaffStatusChange: (staff: NurseStaff, status: StaffStatus) => void;
+  onRecallPrevious: () => void;
+  quickMode?: boolean;
+  lockedNurseIds?: string[];
+  onToggleLock?: (nurseId: string) => void;
+}
+
+/*
+ * One board, one interaction model, used by BOTH Current Staffing and Next
+ * Shift Plan. Previously Current Staffing rendered a cut-down `quickMode`
+ * variant that hid rapid acuity coding and every flag control, so the Charge
+ * Nurse could not code a room at all on the screen they actually work on.
+ */
+
+type Tool =
+  | { kind: 'acuity'; value: AcuityLevel }
+  | { kind: 'flag'; value: ComplexityFlag }
+  | { kind: 'status'; value: 'OCCUPIED' | 'VACANT' }
+  | null;
+
+const ACUITIES: AcuityLevel[] = ['CVICU', 'ICU', 'PCU', 'TELE'];
+
+const ACUITY_STYLES: Record<AcuityLevel, { chip: string; badge: string; room: string }> = {
+  CVICU: { chip: 'bg-rose-100 border-rose-400 text-rose-900', badge: 'bg-rose-100 text-rose-800 border-rose-200', room: 'bg-rose-200/90 border-rose-500 text-rose-950' },
+  ICU: { chip: 'bg-orange-100 border-orange-400 text-orange-900', badge: 'bg-orange-100 text-orange-800 border-orange-200', room: 'bg-orange-200/90 border-orange-500 text-orange-950' },
+  PCU: { chip: 'bg-blue-100 border-blue-400 text-blue-900', badge: 'bg-blue-100 text-blue-800 border-blue-200', room: 'bg-blue-200/90 border-blue-500 text-blue-950' },
+  TELE: { chip: 'bg-emerald-100 border-emerald-400 text-emerald-900', badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', room: 'bg-emerald-200/90 border-emerald-500 text-emerald-950' },
 };
-const ACUITY_STYLES:Record<AcuityLevel,{badge:string;room:string}>={CVICU:{badge:'bg-rose-100 text-rose-800 border-rose-200',room:'bg-rose-200/90 border-rose-500 text-rose-950'},ICU:{badge:'bg-orange-100 text-orange-800 border-orange-200',room:'bg-orange-200/90 border-orange-500 text-orange-950'},PCU:{badge:'bg-blue-100 text-blue-800 border-blue-200',room:'bg-blue-200/90 border-blue-500 text-blue-950'},TELE:{badge:'bg-emerald-100 text-emerald-800 border-emerald-200',room:'bg-emerald-200/90 border-emerald-500 text-emerald-950'}};
-const FLAGS:{flag:ComplexityFlag;label:string;icon:React.ReactNode}[]=[
- {flag:'Vent',label:'Vent',icon:<Wind className="w-3.5 h-3.5"/>},{flag:'Vasoactive Support',label:'Vasoactive Support',icon:<Activity className="w-3.5 h-3.5"/>},{flag:'Inotropic Support',label:'Inotropic Support',icon:<HeartPulse className="w-3.5 h-3.5"/>},{flag:'Impella/IABP',label:'Impella/IABP',icon:<HeartPulse className="w-3.5 h-3.5"/>},{flag:'Fresh Post-Op',label:'Fresh Post Op',icon:<CircleDot className="w-3.5 h-3.5"/>},{flag:'Pending Surgery',label:'Pending Surgery',icon:<CircleDot className="w-3.5 h-3.5"/>},{flag:'Pending Procedure',label:'Pending Procedure',icon:<CircleDot className="w-3.5 h-3.5"/>},{flag:'HD/Dialysis',label:'HD/Dialysis',icon:<Droplets className="w-3.5 h-3.5"/>},{flag:'Isolation',label:'Isolation',icon:<ShieldAlert className="w-3.5 h-3.5"/>},{flag:'Sitter/Safety',label:'Sitter/Safety',icon:<Users className="w-3.5 h-3.5"/>},{flag:'High Fall Risk',label:'High Fall Risk',icon:<AlertTriangle className="w-3.5 h-3.5"/>},{flag:'Confused',label:'Confused',icon:<Brain className="w-3.5 h-3.5"/>},{flag:'Admission',label:'Recent Admission',icon:<LogIn className="w-3.5 h-3.5"/>},{flag:'Transfer',label:'Pending Transfer',icon:<MoveRight className="w-3.5 h-3.5"/>},{flag:'Possible DC',label:'Possible DC',icon:<Home className="w-3.5 h-3.5 text-amber-500"/>},{flag:'Expected DC',label:'Expected DC',icon:<Home className="w-3.5 h-3.5 text-emerald-600"/>},{flag:'BLOCKED',label:'BLOCKED',icon:<Ban className="w-3.5 h-3.5"/>},{flag:'Discharge',label:'Discharge',icon:<LogOut className="w-3.5 h-3.5"/>}
-];
-const firstName=(name:string)=>name.trim().split(/\s+/)[0]||name;
-const linkedPartner=(staff:NurseStaff,roster:NurseStaff[])=>staff.orientationPartnerId?roster.find(x=>x.id===staff.orientationPartnerId):roster.find(x=>x.orientationPartnerId===staff.id&&['Preceptor','Orientee'].includes(x.role));
-const pairLabel=(staff:NurseStaff,roster:NurseStaff[])=>{const p=linkedPartner(staff,roster);return p&&staff.role==='Preceptor'?`${firstName(staff.name)} / ${firstName(p.name)}`:firstName(staff.name)};
-const isPairedOrientee=(s:NurseStaff,r:NurseStaff[])=>s.role==='Orientee'&&linkedPartner(s,r)?.role==='Preceptor';
-const isBedsideRole=(s:NurseStaff)=>['RN','CHG','Preceptor'].includes(s.role);
-const canReceivePatients=(s:NurseStaff)=>isBedsideRole(s)&&['ACTIVE','RECALLED'].includes(s.staffStatus);
-const roomHasFlag=(r:PatientRoom,f:ComplexityFlag)=>f==='Vasoactive Support'?(r.flags.includes('Vasoactive Support')||r.flags.includes('Pressors')):r.flags.includes(f);
-const dischargeHouse=(r:PatientRoom,size='w-3 h-3')=>r.flags.includes('Expected DC')?<Home className={`${size} inline-block text-emerald-600 fill-emerald-100`}/>:r.flags.includes('Possible DC')?<Home className={`${size} inline-block text-amber-500 fill-amber-100`}/>:null;
-const roomFlagIcons=(r:PatientRoom)=>{const map:[ComplexityFlag,React.ReactNode][]=[['Vent',<Wind/>],['Vasoactive Support',<Activity/>],['Inotropic Support',<HeartPulse/>],['Impella/IABP',<HeartPulse/>],['Fresh Post-Op',<CircleDot/>],['Pending Surgery',<CircleDot/>],['Pending Procedure',<CircleDot/>],['HD/Dialysis',<Droplets/>],['Isolation',<ShieldAlert/>],['Sitter/Safety',<Users/>],['High Fall Risk',<AlertTriangle/>],['Confused',<Brain/>],['Admission',<LogIn/>],['Transfer',<MoveRight/>],['Possible DC',<Home/>],['Expected DC',<Home/>],['BLOCKED',<Ban/>]];const items=map.filter(([f])=>roomHasFlag(r,f));return items.length?<span className="absolute left-full ml-1 top-1/2 -translate-y-1/2 flex flex-col gap-0.5 pointer-events-none">{items.map(([f,n])=><span key={f} title={f} className={`w-4 h-4 rounded bg-white/95 border shadow-sm flex items-center justify-center [&>svg]:w-2.5 [&>svg]:h-2.5 ${f==='Expected DC'?'text-emerald-600':f==='Possible DC'?'text-amber-500':'text-slate-700'}`}>{n}</span>)}</span>:null};
 
-export const FloorPlanCurrentStaffing:React.FC<Props>=({currentShift,onRoomChange,onAssignRoom,onRecallPrevious,quickMode=false})=>{
- const occupied=currentShift.rooms.filter(r=>r.isOccupied),unassigned=occupied.filter(r=>!r.assignedNurseId);
- const[selectedRoomNumber,setSelectedRoomNumber]=useState(occupied[0]?.roomNumber||'101'),[manualStaffId,setManualStaffId]=useState<string|null>(null);
- const selectedRoom=currentShift.rooms.find(r=>r.roomNumber===selectedRoomNumber)||currentShift.rooms[0],assignedNurse=currentShift.roster.find(s=>s.id===selectedRoom?.assignedNurseId),manualStaff=currentShift.roster.find(s=>s.id===manualStaffId)||null;
- const rosterRows=useMemo(()=>currentShift.roster.filter(s=>!isPairedOrientee(s,currentShift.roster)),[currentShift.roster]);const assignableStaff=useMemo(()=>currentShift.roster.filter(canReceivePatients),[currentShift.roster]);
- const roomsFor=(id:string)=>currentShift.rooms.filter(r=>r.isOccupied&&r.assignedNurseId===id);
- const setAcuity=(a:AcuityLevel)=>selectedRoom&&onRoomChange({...selectedRoom,acuity:a,acuityConfirmed:true,isOccupied:true});
- const toggleFlag=(flag:ComplexityFlag)=>{if(!selectedRoom)return;const exists=roomHasFlag(selectedRoom,flag);let flags=selectedRoom.flags.filter(f=>!(flag==='Vasoactive Support'&&(f==='Pressors'||f==='Vasoactive Support'))&&f!==flag);if(!exists)flags=[...flags,flag];if(!exists&&flag==='Expected DC')flags=flags.filter(f=>f!=='Possible DC');if(!exists&&flag==='Possible DC')flags=flags.filter(f=>f!=='Expected DC');onRoomChange({...selectedRoom,flags})};
- const selectStaff=(s:NurseStaff)=>{if(canReceivePatients(s))setManualStaffId(manualStaffId===s.id?null:s.id)};
- const roomClick=(r:PatientRoom)=>{setSelectedRoomNumber(r.roomNumber);if(manualStaffId&&r.isOccupied)onAssignRoom(r.roomNumber,r.assignedNurseId===manualStaffId?null:manualStaffId)};
- const clearStaff=(id:string)=>roomsFor(id).forEach(r=>onAssignRoom(r.roomNumber,null));const clearAll=()=>occupied.filter(r=>r.assignedNurseId).forEach(r=>onAssignRoom(r.roomNumber,null));
- const clickNeedsRoom=(r:PatientRoom)=>{setSelectedRoomNumber(r.roomNumber);if(manualStaffId)onAssignRoom(r.roomNumber,manualStaffId)};
- return <div className={`grid grid-cols-1 ${quickMode?'xl:grid-cols-[270px_minmax(0,1fr)]':'2xl:grid-cols-[260px_minmax(0,1fr)_320px]'} gap-2 items-start`}>
-  <aside className="space-y-2">{!quickMode&&<RapidRoomTools rooms={currentShift.rooms} onRoomChange={onRoomChange}/>}<div className="bg-white border-2 border-slate-300 rounded-xl overflow-hidden"><div className="px-3 py-2 bg-slate-900 text-white"><div className="flex justify-between gap-2"><div><div className="text-base font-black uppercase">Quick Assign</div><div className="text-[11px] text-slate-300">Tap nurse → tap rooms. Repeat.</div></div><button onClick={clearAll} className="text-[10px] font-bold border rounded px-2">Clear All</button></div>{!quickMode&&<button onClick={onRecallPrevious} className="mt-2 w-full text-[10px] font-black border border-indigo-300 bg-indigo-500/20 rounded px-2 py-1.5 flex justify-center gap-1"><RotateCcw className="w-3 h-3"/>Recall Previous Assignments</button>}</div><div className="divide-y">{rosterRows.map(staff=>{const rs=roomsFor(staff.id),selected=manualStaffId===staff.id,canAssign=canReceivePatients(staff),partner=linkedPartner(staff,currentShift.roster);return <div key={staff.id} className={`px-3 py-2 ${selected?'bg-indigo-100 ring-2 ring-inset ring-indigo-400':!canAssign?'bg-slate-50':''}`}><div className="flex justify-between"><button disabled={!canAssign} onClick={()=>selectStaff(staff)} className="text-left disabled:cursor-default"><div className={`text-sm font-black ${selected?'text-indigo-900':canAssign?'text-slate-900':'text-slate-400'}`}>{pairLabel(staff,currentShift.roster)} <span className="text-[10px]">• {staff.role==='Preceptor'&&partner?'Preceptor/Orientee':staff.role}</span></div><div className={`text-[9px] font-black ${selected?'text-indigo-700':'text-blue-700'}`}>{canAssign?(selected?'SELECTED — TAP ROOMS':'TAP TO ASSIGN'):`${staff.role} • ${staff.staffStatus}`}</div></button><div>{rs.length>0&&<button onClick={()=>clearStaff(staff.id)} className="text-[9px] text-rose-700 border rounded px-1.5">Clear</button>}</div></div><div className="flex flex-wrap gap-1 mt-1">{rs.map(r=><span key={r.roomNumber} className={`inline-flex rounded border text-xs font-black ${ACUITY_STYLES[r.acuity].badge}`}><span className="px-1.5 py-0.5">{r.roomNumber}{dischargeHouse(r,'w-3 h-3')}</span><button onClick={()=>onAssignRoom(r.roomNumber,null)} className="px-1 border-l">×</button></span>)}{!rs.length&&<span className="text-xs text-slate-400">—</span>}</div></div>})}</div></div></aside>
-  <section className="min-w-0 space-y-2">{manualStaff&&<div className="bg-indigo-50 border-2 border-indigo-400 rounded-lg px-3 py-1.5 flex justify-between"><div><div className="text-xs font-black uppercase text-indigo-900">Assigning to {pairLabel(manualStaff,currentShift.roster)}</div><div className="text-[11px] text-indigo-900">Tap occupied rooms repeatedly.</div></div><button onClick={()=>setManualStaffId(null)} className="bg-white border rounded px-2 font-bold"><X className="w-4"/></button></div>}
-   <div className="bg-white border rounded-xl overflow-hidden"><div className="px-3 py-2 border-b"><div className="flex justify-between items-center gap-2"><h2 className="font-black text-base">1 East Floor Plan</h2><div className={`px-2 py-1 rounded border text-xs font-black ${unassigned.length?'bg-rose-50 border-rose-300 text-rose-800':'bg-emerald-50 border-emerald-300 text-emerald-800'}`}>{unassigned.length ? `${unassigned.length} NEED ASSIGNMENT` : 'ALL ASSIGNED ✓'}</div></div><div className={`mt-1.5 rounded-lg border px-2 py-1.5 ${unassigned.length?'bg-rose-50 border-rose-300':'bg-emerald-50 border-emerald-300'}`}><div className="flex items-center gap-2 flex-wrap"><div className={`text-[10px] font-black uppercase ${unassigned.length?'text-rose-800':'text-emerald-800'}`}>Needs Assignment</div>{unassigned.map(r=><button key={r.roomNumber} onClick={()=>clickNeedsRoom(r)} className="px-2 py-0.5 rounded border-2 border-rose-300 bg-white text-sm font-black text-rose-800 hover:bg-rose-100">{r.roomNumber}{dischargeHouse(r,'w-3 h-3')}</button>)}{!unassigned.length&&<span className="text-xs font-bold text-emerald-700">No rooms waiting for an RN.</span>}</div></div></div><div className="flex justify-center bg-slate-50 overflow-hidden"><div className="relative" style={{width:'min(100%, calc(60vh * 1.1849))',aspectRatio:'1365 / 1152'}}><img src={floorPlanImage} className="absolute inset-0 w-full h-full object-contain opacity-70"/>{currentShift.rooms.map(r=>{const pos=ROOM_POSITIONS[r.roomNumber];if(!pos)return null;const nurse=currentShift.roster.find(s=>s.id===r.assignedNurseId),need=r.isOccupied&&!r.assignedNurseId,selected=r.roomNumber===selectedRoom?.roomNumber,belongs=!!manualStaffId&&r.assignedNurseId===manualStaffId,missing=r.isOccupied&&r.acuityConfirmed===false,style=!r.isOccupied?'bg-white/95 border-slate-400 text-slate-500':missing?'bg-amber-100 border-amber-500 text-amber-950':ACUITY_STYLES[r.acuity].room;return <button key={r.roomNumber} onClick={()=>roomClick(r)} className={`absolute -translate-x-1/2 -translate-y-1/2 w-[8.5%] min-w-[62px] rounded-md border-2 shadow-md px-1 py-1.5 ${style} ${selected?'ring-4 ring-slate-900/20 z-20':'z-10'} ${need?'outline outline-3 outline-rose-500/80':''} ${belongs?'ring-4 ring-indigo-500/70':''}`} style={{left:`${pos.left}%`,top:`${pos.top}%`}}><div className="font-black text-base leading-none">{r.roomNumber}{r.isOccupied&&r.assignedNurseId?' ✓':''}</div><div className="text-[10px] font-bold leading-tight mt-0.5">{r.isOccupied?(missing?'ACUITY?':r.acuity):'EMPTY'}</div>{r.isOccupied&&<div className={`text-[9px] leading-tight truncate ${need?'font-black text-rose-800':''}`}>{nurse?pairLabel(nurse,currentShift.roster):'UNASSIGNED'}</div>}{r.isOccupied&&roomFlagIcons(r)}</button>})}</div></div></div>
-   {!quickMode&&<><div className="bg-white border rounded-xl p-3"><div className="text-sm font-black uppercase">On-Call / QGenda</div><div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-2 text-[11px]">{Object.entries({Intensivist:currentShift.onCall.intensivist,Cardiothoracic:currentShift.onCall.cardiothoracic,'Acute MI':currentShift.onCall.acuteMI,Cardiology:currentShift.onCall.cardiology,Hospitalist:currentShift.onCall.hospitalist}).map(([l,v])=><div key={l} className="bg-slate-50 border rounded p-2"><b>{l}</b><div>{v||'—'}</div></div>)}</div></div></>}
-  </section>
-  {!quickMode&&<aside className="bg-white border rounded-xl p-4 2xl:sticky 2xl:top-4">{selectedRoom&&<><div className="flex justify-between border-b pb-3"><div><div className="text-2xl font-black">Room {selectedRoom.roomNumber}{dischargeHouse(selectedRoom,'w-4 h-4')}</div><div className="text-xs text-slate-500">Live room detail</div></div><label className="text-xs font-bold"><input type="checkbox" checked={selectedRoom.isOccupied} onChange={e=>onRoomChange({...selectedRoom,isOccupied:e.target.checked,assignedNurseId:e.target.checked?selectedRoom.assignedNurseId:null})}/> Occupied</label></div><div className="mt-3"><label className="text-xs font-black">Acuity</label><select value={selectedRoom.acuity} onChange={e=>setAcuity(e.target.value as AcuityLevel)} className="w-full border rounded px-3 py-2 text-base font-black"><option>CVICU</option><option>ICU</option><option>PCU</option><option>TELE</option></select></div><div className="mt-3"><label className="text-xs font-black">Assigned RN</label><select value={selectedRoom.assignedNurseId||''} onChange={e=>onAssignRoom(selectedRoom.roomNumber,e.target.value||null)} className="w-full border rounded px-3 py-2"><option value="">Unassigned</option>{assignableStaff.map(s=><option key={s.id} value={s.id}>{pairLabel(s,currentShift.roster)}</option>)}</select>{assignedNurse&&<div className="text-xs mt-1">Current: <b>{pairLabel(assignedNurse,currentShift.roster)}</b></div>}</div><div className="mt-4"><div className="text-sm font-black mb-2">Quick Flags</div><div className="grid grid-cols-2 gap-1.5">{FLAGS.map(({flag,label,icon})=><button key={flag} onClick={()=>toggleFlag(flag)} className={`min-h-9 flex items-center gap-1.5 px-2 rounded border text-[11px] font-bold ${roomHasFlag(selectedRoom,flag)?'bg-blue-50 border-blue-400':'bg-slate-50'}`}>{icon}{label}</button>)}</div></div></>}</aside>}
- </div>
+type FlagDef = { flag: ComplexityFlag; label: string; short: string; icon: React.ReactNode; primary?: boolean; vacantOnly?: boolean };
+
+const FLAGS: FlagDef[] = [
+  { flag: 'Fresh Post-Op', label: 'Fresh Post-Op', short: 'Post-Op', icon: <CircleDot />, primary: true },
+  { flag: 'Possible DC', label: 'Possible DC', short: 'Poss DC', icon: <Home />, primary: true },
+  { flag: 'Expected DC', label: 'Expected DC', short: 'Exp DC', icon: <Home />, primary: true },
+  { flag: 'Admission', label: 'Recent Admission', short: 'Admit', icon: <LogIn />, primary: true },
+  { flag: 'Transfer', label: 'Pending Transfer', short: 'Xfer', icon: <MoveRight />, primary: true },
+  { flag: 'Expected Admission', label: 'Expected Admission', short: 'Exp Admit', icon: <LogIn />, primary: true, vacantOnly: true },
+  { flag: 'Vent', label: 'Vent', short: 'Vent', icon: <Wind />, primary: true },
+  { flag: 'BLOCKED', label: 'BLOCKED', short: 'Blocked', icon: <Ban />, primary: true },
+  { flag: 'Pending Surgery', label: 'Pending Surgery', short: 'Pend Surg', icon: <CircleDot /> },
+  { flag: 'Pending Procedure', label: 'Pending Procedure', short: 'Pend Proc', icon: <CircleDot /> },
+  { flag: 'Vasoactive Support', label: 'Vasoactive Support', short: 'Vasoactive', icon: <Activity /> },
+  { flag: 'Inotropic Support', label: 'Inotropic Support', short: 'Inotrope', icon: <HeartPulse /> },
+  { flag: 'Impella/IABP', label: 'Impella/IABP', short: 'Impella', icon: <HeartPulse /> },
+  { flag: 'HD/Dialysis', label: 'HD/Dialysis', short: 'HD', icon: <Droplets /> },
+  { flag: 'Isolation', label: 'Isolation', short: 'Iso', icon: <ShieldAlert /> },
+  { flag: 'Sitter/Safety', label: 'Sitter/Safety', short: 'Sitter', icon: <Users /> },
+  { flag: 'High Fall Risk', label: 'High Fall Risk', short: 'Fall', icon: <AlertTriangle /> },
+  { flag: 'Confused', label: 'Confused', short: 'Confused', icon: <Brain /> },
+  { flag: 'Discharge', label: 'Discharged', short: 'DC\u2019d', icon: <LogOut /> },
+];
+
+const FLAG_TINT: Partial<Record<ComplexityFlag, string>> = {
+  'Expected DC': 'text-emerald-600',
+  'Possible DC': 'text-amber-500',
+  'Expected Admission': 'text-sky-600',
+  BLOCKED: 'text-slate-900',
+};
+
+const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
+
+const linkedPartner = (staff: NurseStaff, roster: NurseStaff[]) =>
+  staff.orientationPartnerId
+    ? roster.find(x => x.id === staff.orientationPartnerId)
+    : roster.find(x => x.orientationPartnerId === staff.id && ['Preceptor', 'Orientee'].includes(x.role));
+
+/** Preceptor and orientee always render on one line: "Renee / Mark". */
+const pairLabel = (staff: NurseStaff, roster: NurseStaff[]) => {
+  const partner = linkedPartner(staff, roster);
+  return partner && staff.role === 'Preceptor' ? `${firstName(staff.name)} / ${firstName(partner.name)}` : firstName(staff.name);
+};
+
+const isPairedOrientee = (s: NurseStaff, roster: NurseStaff[]) => s.role === 'Orientee' && linkedPartner(s, roster)?.role === 'Preceptor';
+const isBedsideRole = (s: NurseStaff) => ['RN', 'CHG', 'Preceptor'].includes(s.role);
+const canReceivePatients = (s: NurseStaff) => isBedsideRole(s) && ['ACTIVE', 'RECALLED'].includes(s.staffStatus);
+
+const roomHasFlag = (r: PatientRoom, f: ComplexityFlag) =>
+  f === 'Vasoactive Support' ? r.flags.includes('Vasoactive Support') || r.flags.includes('Pressors') : r.flags.includes(f);
+
+const dischargeHouse = (r: PatientRoom, size = 'w-3 h-3') =>
+  r.flags.includes('Expected DC') ? <Home className={`${size} inline-block text-emerald-600 fill-emerald-100`} />
+    : r.flags.includes('Possible DC') ? <Home className={`${size} inline-block text-amber-500 fill-amber-100`} />
+      : null;
+
+/** Applies a flag toggle, keeping the mutually exclusive discharge states sane. */
+const withFlagToggled = (room: PatientRoom, flag: ComplexityFlag): PatientRoom => {
+  const active = roomHasFlag(room, flag);
+  let flags = room.flags.filter(f => !(flag === 'Vasoactive Support' && (f === 'Pressors' || f === 'Vasoactive Support')) && f !== flag);
+  if (!active) {
+    flags = [...flags, flag];
+    if (flag === 'Expected DC') flags = flags.filter(f => f !== 'Possible DC');
+    if (flag === 'Possible DC') flags = flags.filter(f => f !== 'Expected DC');
+  }
+  return { ...room, flags };
+};
+
+const roomFlagIcons = (r: PatientRoom) => {
+  const items = FLAGS.filter(({ flag }) => flag !== 'Discharge' && roomHasFlag(r, flag));
+  if (!items.length) return null;
+  return (
+    <span className="absolute left-full ml-1 top-1/2 -translate-y-1/2 flex flex-col gap-0.5 pointer-events-none">
+      {items.slice(0, 5).map(({ flag, icon }) => (
+        <span key={flag} title={flag} className={`w-4 h-4 rounded bg-white/95 border shadow-sm flex items-center justify-center [&>svg]:w-2.5 [&>svg]:h-2.5 ${FLAG_TINT[flag] || 'text-slate-700'}`}>
+          {icon}
+        </span>
+      ))}
+    </span>
+  );
+};
+
+export const FloorPlanCurrentStaffing: React.FC<Props> = ({
+  currentShift, onRoomChange, onAssignRoom, quickMode = false, lockedNurseIds = [], onToggleLock,
+}) => {
+  const [selectedRoomNumber, setSelectedRoomNumber] = useState(
+    () => currentShift.rooms.find(r => r.isOccupied)?.roomNumber || '101',
+  );
+  const [manualStaffId, setManualStaffId] = useState<string | null>(null);
+  const [tool, setTool] = useState<Tool>(null);
+  const [showAllFlags, setShowAllFlags] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+
+  const occupied = currentShift.rooms.filter(r => r.isOccupied);
+  const unassigned = occupied.filter(r => !r.assignedNurseId);
+  const uncoded = occupied.filter(r => r.acuityConfirmed === false);
+  const locked = new Set(lockedNurseIds);
+
+  const selectedRoom = currentShift.rooms.find(r => r.roomNumber === selectedRoomNumber) || currentShift.rooms[0];
+  const manualStaff = currentShift.roster.find(s => s.id === manualStaffId) || null;
+
+  const rosterRows = useMemo(
+    () => currentShift.roster.filter(s => !isPairedOrientee(s, currentShift.roster)),
+    [currentShift.roster],
+  );
+  const assignableStaff = useMemo(() => currentShift.roster.filter(canReceivePatients), [currentShift.roster]);
+  const roomsFor = (id: string) => currentShift.rooms.filter(r => r.isOccupied && r.assignedNurseId === id);
+
+  // Rapid coding and rapid assignment are mutually exclusive modes, so a tap
+  // on a room tile is never ambiguous.
+  const pickTool = (next: Exclude<Tool, null>) => {
+    setManualStaffId(null);
+    setTool(current => (current?.kind === next.kind && current.value === next.value ? null : next));
+  };
+  const selectStaff = (s: NurseStaff) => {
+    if (!canReceivePatients(s)) return;
+    setTool(null);
+    setManualStaffId(current => (current === s.id ? null : s.id));
+  };
+
+  const applyTool = (room: PatientRoom) => {
+    if (!tool) return;
+    if (tool.kind === 'status') {
+      onRoomChange(tool.value === 'OCCUPIED' ? { ...room, isOccupied: true } : { ...room, isOccupied: false, assignedNurseId: null });
+      return;
+    }
+    if (tool.kind === 'acuity') {
+      const already = room.acuityConfirmed !== false && room.acuity === tool.value;
+      onRoomChange(already ? { ...room, acuityConfirmed: false } : { ...room, acuity: tool.value, acuityConfirmed: true });
+      return;
+    }
+    onRoomChange(withFlagToggled(room, tool.value));
+  };
+
+  const roomClick = (room: PatientRoom) => {
+    setSelectedRoomNumber(room.roomNumber);
+    if (tool) { applyTool(room); return; }
+    if (manualStaffId && room.isOccupied) {
+      onAssignRoom(room.roomNumber, room.assignedNurseId === manualStaffId ? null : manualStaffId);
+    }
+  };
+
+  const clearStaff = (id: string) => roomsFor(id).forEach(r => onAssignRoom(r.roomNumber, null));
+  const clearAll = () => {
+    if (!window.confirm('Clear every RN assignment on this board? Acuity and flags are kept.')) return;
+    occupied.filter(r => r.assignedNurseId).forEach(r => onAssignRoom(r.roomNumber, null));
+  };
+
+  const toolActive = (candidate: Exclude<Tool, null>) => tool?.kind === candidate.kind && tool.value === candidate.value;
+  const visibleFlags = showAllFlags ? FLAGS : FLAGS.filter(f => f.primary);
+
+  const toolBanner = !tool ? null
+    : tool.kind === 'acuity' ? `Tap rooms to set ${tool.value} · tap again to clear`
+      : tool.kind === 'status' ? `Tap rooms to mark ${tool.value === 'OCCUPIED' ? 'occupied' : 'vacant'}`
+        : `Tap rooms to toggle ${FLAGS.find(f => f.flag === tool.value)?.label}`;
+
+  return (
+    <div className={`grid grid-cols-1 ${quickMode ? 'xl:grid-cols-[270px_minmax(0,1fr)]' : '2xl:grid-cols-[270px_minmax(0,1fr)]'} gap-2 items-start relative`}>
+
+      {/* ------------------------------------------------ NURSE RAIL */}
+      <aside className="bg-white border-2 border-slate-300 rounded-xl overflow-hidden">
+        <div className="px-3 py-2 bg-slate-900 text-white flex justify-between gap-2">
+          <div>
+            <div className="text-base font-black uppercase leading-none">Quick Assign</div>
+            <div className="text-[11px] text-slate-300 mt-0.5">Tap nurse → tap rooms. Repeat.</div>
+          </div>
+          <button onClick={clearAll} className="text-[10px] font-bold border border-slate-600 rounded px-2 self-start py-1">Clear All</button>
+        </div>
+
+        <div className="divide-y">
+          {rosterRows.map(staff => {
+            const assigned = roomsFor(staff.id);
+            const selected = manualStaffId === staff.id;
+            const canAssign = canReceivePatients(staff);
+            const partner = linkedPartner(staff, currentShift.roster);
+            const isLocked = locked.has(staff.id);
+            return (
+              <div key={staff.id} className={`px-3 py-2 ${selected ? 'bg-indigo-100 ring-2 ring-inset ring-indigo-400' : !canAssign ? 'bg-slate-50' : ''}`}>
+                <div className="flex justify-between items-start gap-1">
+                  <button disabled={!canAssign} onClick={() => selectStaff(staff)} className="text-left disabled:cursor-default min-w-0">
+                    <div className={`text-sm font-black truncate ${selected ? 'text-indigo-900' : canAssign ? 'text-slate-900' : 'text-slate-400'}`}>
+                      {pairLabel(staff, currentShift.roster)}
+                      <span className="text-[10px] font-bold"> • {staff.role === 'Preceptor' && partner ? 'Preceptor/Orientee' : staff.role}</span>
+                    </div>
+                    <div className={`text-[9px] font-black ${selected ? 'text-indigo-700' : 'text-blue-700'}`}>
+                      {canAssign ? (selected ? 'SELECTED — TAP ROOMS' : 'TAP TO ASSIGN') : `${staff.role} • ${staff.staffStatus}`}
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {canAssign && onToggleLock && (
+                      <button
+                        onClick={() => onToggleLock(staff.id)}
+                        title={isLocked ? 'Unlock — Semi-Auto may add patients' : 'Lock — Semi-Auto will not add patients to this nurse'}
+                        className={`rounded border px-1 py-1 ${isLocked ? 'bg-amber-100 border-amber-400 text-amber-800' : 'border-slate-200 text-slate-400'}`}
+                      >
+                        {isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                      </button>
+                    )}
+                    {assigned.length > 0 && (
+                      <button onClick={() => clearStaff(staff.id)} className="text-[9px] font-bold text-rose-700 border border-rose-200 rounded px-1.5 py-1">Clear</button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {assigned.map(r => (
+                    <span key={r.roomNumber} className={`inline-flex rounded border text-xs font-black ${ACUITY_STYLES[r.acuity].badge}`}>
+                      <span className="px-1.5 py-0.5">{r.roomNumber}{dischargeHouse(r)}</span>
+                      <button onClick={() => onAssignRoom(r.roomNumber, null)} className="px-1 border-l hover:bg-white/60" title={`Remove ${r.roomNumber}`}>×</button>
+                    </span>
+                  ))}
+                  {!assigned.length && <span className="text-xs text-slate-400">—</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </aside>
+
+      {/* ------------------------------------------------ MAP COLUMN */}
+      <section className="min-w-0 space-y-1.5">
+
+        {/* Rapid coding strip — available on every board, not just planning. */}
+        <div className="bg-white border rounded-xl px-2 py-1.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] font-black uppercase text-slate-500 mr-0.5">Acuity</span>
+              {ACUITIES.map(a => (
+                <button
+                  key={a}
+                  onClick={() => pickTool({ kind: 'acuity', value: a })}
+                  className={`rounded border-2 px-2 py-1 text-[11px] font-black ${ACUITY_STYLES[a].chip} ${toolActive({ kind: 'acuity', value: a }) ? 'ring-2 ring-slate-900' : 'opacity-80'}`}
+                >{a}</button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] font-black uppercase text-slate-500 mr-0.5">Bed</span>
+              {(['OCCUPIED', 'VACANT'] as const).map(v => (
+                <button
+                  key={v}
+                  onClick={() => pickTool({ kind: 'status', value: v })}
+                  className={`rounded border px-2 py-1 text-[11px] font-black ${toolActive({ kind: 'status', value: v }) ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'}`}
+                >{v === 'OCCUPIED' ? 'Occ' : 'Vac'}</button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[9px] font-black uppercase text-slate-500 mr-0.5">Flag</span>
+              {visibleFlags.map(({ flag, short, icon }) => (
+                <button
+                  key={flag}
+                  onClick={() => pickTool({ kind: 'flag', value: flag })}
+                  title={FLAGS.find(f => f.flag === flag)?.label}
+                  className={`rounded border px-1.5 py-1 text-[10px] font-bold flex items-center gap-1 [&>svg]:w-3 [&>svg]:h-3 ${toolActive({ kind: 'flag', value: flag }) ? 'bg-slate-900 text-white border-slate-900' : `bg-slate-50 border-slate-200 ${FLAG_TINT[flag] || 'text-slate-700'}`}`}
+                >{icon}{short}</button>
+              ))}
+              <button onClick={() => setShowAllFlags(v => !v)} className="rounded border border-slate-200 px-1.5 py-1 text-[10px] font-bold text-slate-500 flex items-center gap-0.5">
+                <ChevronDown className={`w-3 h-3 transition-transform ${showAllFlags ? 'rotate-180' : ''}`} />{showAllFlags ? 'Less' : 'More'}
+              </button>
+            </div>
+
+            {uncoded.length > 0 && !tool && (
+              <span className="text-[10px] font-black text-amber-800 bg-amber-50 border border-amber-300 rounded px-2 py-1">
+                {uncoded.length} need acuity: {uncoded.map(r => r.roomNumber).join(' ')}
+              </span>
+            )}
+          </div>
+
+          {tool && (
+            <div className="mt-1 flex items-center justify-between gap-2 bg-slate-900 text-white rounded px-2 py-1">
+              <span className="text-[11px] font-black uppercase">{toolBanner}</span>
+              <button onClick={() => setTool(null)} className="border border-slate-600 rounded px-1.5 text-[10px] font-bold flex items-center gap-1"><X className="w-3 h-3" />Done</button>
+            </div>
+          )}
+        </div>
+
+        {manualStaff && (
+          <div className="bg-indigo-50 border-2 border-indigo-400 rounded-lg px-3 py-1.5 flex justify-between items-center">
+            <div>
+              <div className="text-xs font-black uppercase text-indigo-900">Assigning to {pairLabel(manualStaff, currentShift.roster)}</div>
+              <div className="text-[11px] text-indigo-900">Tap occupied rooms repeatedly. Tap an assigned room to remove it.</div>
+            </div>
+            <button onClick={() => setManualStaffId(null)} className="bg-white border rounded px-2 py-1 font-bold"><X className="w-4 h-4" /></button>
+          </div>
+        )}
+
+        {/* ------------------------------------------- FLOOR PLAN */}
+        <div className="bg-white border rounded-xl overflow-hidden">
+          <div className="px-3 py-1.5 border-b">
+            <div className={`rounded-lg border px-2 py-1.5 ${unassigned.length ? 'bg-rose-50 border-rose-300' : 'bg-emerald-50 border-emerald-300'}`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className={`text-[11px] font-black uppercase ${unassigned.length ? 'text-rose-800' : 'text-emerald-800'}`}>
+                  Needs Assignment — {unassigned.length}
+                </div>
+                {unassigned.map(r => (
+                  <button
+                    key={r.roomNumber}
+                    onClick={() => roomClick(r)}
+                    className="px-2 py-0.5 rounded border-2 border-rose-300 bg-white text-sm font-black text-rose-800 hover:bg-rose-100"
+                  >{r.roomNumber}{dischargeHouse(r)}</button>
+                ))}
+                {!unassigned.length && <span className="text-xs font-bold text-emerald-700">Every occupied room has an RN. ✓</span>}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-center bg-slate-50 overflow-hidden">
+            <div className="relative" style={{ width: 'min(100%, calc(62vh * 1.2062))', aspectRatio: '1568 / 1300' }}>
+              <img src={floorPlanImage} alt="1 East floor plan" className="absolute inset-0 w-full h-full object-contain opacity-70" />
+              {currentShift.rooms.map(room => {
+                const pos = ROOM_POSITIONS[room.roomNumber];
+                if (!pos) return null;
+                const nurse = currentShift.roster.find(s => s.id === room.assignedNurseId);
+                const needsRn = room.isOccupied && !room.assignedNurseId;
+                const isSelected = room.roomNumber === selectedRoom?.roomNumber;
+                const belongsToSelection = !!manualStaffId && room.assignedNurseId === manualStaffId;
+                const acuityMissing = room.isOccupied && room.acuityConfirmed === false;
+                const style = !room.isOccupied
+                  ? 'bg-white/95 border-slate-400 text-slate-500'
+                  : acuityMissing
+                    ? 'bg-amber-100 border-amber-500 text-amber-950'
+                    : ACUITY_STYLES[room.acuity].room;
+                return (
+                  <button
+                    key={room.roomNumber}
+                    onClick={() => roomClick(room)}
+                    onDoubleClick={() => { setSelectedRoomNumber(room.roomNumber); setDetailOpen(true); }}
+                    className={`absolute -translate-x-1/2 -translate-y-1/2 w-[8.5%] min-w-[62px] rounded-md border-2 shadow-md px-1 py-1.5 ${style} ${isSelected ? 'ring-4 ring-slate-900/20 z-20' : 'z-10'} ${needsRn ? 'outline outline-2 outline-rose-500/80' : ''} ${belongsToSelection ? 'ring-4 ring-indigo-500/70' : ''}`}
+                    style={{ left: `${pos.left}%`, top: `${pos.top}%` }}
+                  >
+                    <div className="font-black text-base leading-none">
+                      {room.roomNumber}{room.isOccupied && room.assignedNurseId ? ' ✓' : ''}
+                    </div>
+                    <div className="text-[10px] font-bold leading-tight mt-0.5">
+                      {room.isOccupied ? (acuityMissing ? 'ACUITY?' : room.acuity) : room.acuityConfirmed !== false ? `EMPTY · ${room.acuity}` : 'EMPTY'}
+                    </div>
+                    {room.isOccupied && (
+                      <div className={`text-[9px] leading-tight truncate ${needsRn ? 'font-black text-rose-800' : ''}`}>
+                        {nurse ? pairLabel(nurse, currentShift.roster) : 'UNASSIGNED'}
+                      </div>
+                    )}
+                    {roomFlagIcons(room)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="px-3 py-1 border-t text-[10px] text-slate-500 flex justify-between">
+            <span>Double-tap a room for full detail. Room positions come from the 1 East architectural floor plan.</span>
+            <button onClick={() => setDetailOpen(true)} className="font-bold text-slate-700 underline">Open room {selectedRoom?.roomNumber}</button>
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------------------------ ROOM DETAIL (exception path only) */}
+      {detailOpen && selectedRoom && (
+        <>
+          <div className="fixed inset-0 bg-slate-900/20 z-40" onClick={() => setDetailOpen(false)} />
+          <aside className="fixed right-3 top-3 bottom-3 w-[330px] bg-white border-2 border-slate-300 rounded-xl p-4 z-50 overflow-y-auto shadow-2xl">
+            <div className="flex justify-between items-start border-b pb-3">
+              <div>
+                <div className="text-2xl font-black">Room {selectedRoom.roomNumber}{dischargeHouse(selectedRoom, 'w-4 h-4')}</div>
+                <div className="text-xs text-slate-500">Exception editing — not the normal path</div>
+              </div>
+              <button onClick={() => setDetailOpen(false)} className="border rounded p-1"><X className="w-4 h-4" /></button>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm font-bold mt-3">
+              <input
+                type="checkbox"
+                checked={selectedRoom.isOccupied}
+                onChange={e => onRoomChange({ ...selectedRoom, isOccupied: e.target.checked, assignedNurseId: e.target.checked ? selectedRoom.assignedNurseId : null })}
+              />
+              Occupied
+            </label>
+
+            <div className="mt-3">
+              <label className="text-xs font-black uppercase text-slate-500">Acuity</label>
+              <div className="grid grid-cols-4 gap-1 mt-1">
+                {ACUITIES.map(a => (
+                  <button
+                    key={a}
+                    onClick={() => onRoomChange({ ...selectedRoom, acuity: a, acuityConfirmed: true })}
+                    className={`rounded border-2 py-2 text-[11px] font-black ${ACUITY_STYLES[a].chip} ${selectedRoom.acuity === a && selectedRoom.acuityConfirmed !== false ? 'ring-2 ring-slate-900' : 'opacity-70'}`}
+                  >{a}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <label className="text-xs font-black uppercase text-slate-500">Assigned RN</label>
+              <select
+                value={selectedRoom.assignedNurseId || ''}
+                onChange={e => onAssignRoom(selectedRoom.roomNumber, e.target.value || null)}
+                className="w-full border rounded px-3 py-2 mt-1"
+              >
+                <option value="">Unassigned</option>
+                {assignableStaff.map(s => <option key={s.id} value={s.id}>{pairLabel(s, currentShift.roster)}</option>)}
+              </select>
+            </div>
+
+            <div className="mt-4">
+              <div className="text-xs font-black uppercase text-slate-500 mb-1.5">Flags</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {FLAGS.map(({ flag, label, icon }) => (
+                  <button
+                    key={flag}
+                    onClick={() => onRoomChange(withFlagToggled(selectedRoom, flag))}
+                    className={`min-h-9 flex items-center gap-1.5 px-2 rounded border text-[11px] font-bold text-left [&>svg]:w-3.5 [&>svg]:h-3.5 [&>svg]:shrink-0 ${roomHasFlag(selectedRoom, flag) ? 'bg-blue-50 border-blue-400' : 'bg-slate-50 border-slate-200'}`}
+                  >{icon}{label}</button>
+                ))}
+              </div>
+            </div>
+          </aside>
+        </>
+      )}
+    </div>
+  );
 };

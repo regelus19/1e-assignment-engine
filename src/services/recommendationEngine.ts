@@ -1,5 +1,5 @@
 import { NurseStaff, PatientRoom, RecommendationResult, AssignmentWarning, NurseRecommendationDetail } from '../types';
-import { ROOM_METADATA_MAP, evaluateGeographicCluster } from '../config/geography';
+import { GEOGRAPHY_BANDS, ROOM_METADATA_MAP, evaluateGeographicCluster, walkingDistance } from '../config/geography';
 
 export type RecommendationStrategy = 'BALANCED' | 'CONSERVE_SKILL_MIX' | 'CAPACITY_EXCEPTION';
 
@@ -7,25 +7,16 @@ const isClinicallyQualified = (n: NurseStaff, r: PatientRoom) =>
   n.capability === 'CVICU' ||
   (n.capability === 'ICU' ? ['ICU', 'PCU', 'TELE'].includes(r.acuity) : ['PCU', 'TELE'].includes(r.acuity));
 
-const createsNonIdeal103IcuPair = (assigned: PatientRoom[], room: PatientRoom): boolean => {
-  if (room.acuity !== 'ICU') return false;
-  const candidateRooms = [...assigned, room];
-  const has103Icu = candidateRooms.some(r => r.roomNumber === '103' && r.acuity === 'ICU');
-  if (!has103Icu) return false;
-  return candidateRooms.some(r => r.roomNumber !== '103' && r.acuity === 'ICU' && ROOM_METADATA_MAP[r.roomNumber]?.hall === 'A');
-};
-
-const createsNonIdeal122114IcuPair = (assigned: PatientRoom[], room: PatientRoom): boolean => {
-  if (room.acuity !== 'ICU') return false;
-  const candidateRooms = [...assigned, room];
-  return candidateRooms.some(r => r.roomNumber === '122' && r.acuity === 'ICU') && candidateRooms.some(r => r.roomNumber === '114' && r.acuity === 'ICU');
-};
-
-const createsPreferred122LowerAcuityPair = (assigned: PatientRoom[], room: PatientRoom): boolean => {
-  const candidateRooms = [...assigned, room];
-  const has122Icu = candidateRooms.some(r => r.roomNumber === '122' && r.acuity === 'ICU');
-  if (!has122Icu) return false;
-  return candidateRooms.some(r => ['113', '120', '121'].includes(r.roomNumber) && ['PCU', 'TELE'].includes(r.acuity));
+/**
+ * How far apart would this nurse's ICU/CVICU rooms be? Critical-care rooms
+ * carry the highest cost when split, because the nurse cannot see both.
+ * Distance comes from the floor plan — there are no room-number rules here.
+ */
+const criticalCareSpread = (assigned: PatientRoom[], room: PatientRoom): number => {
+  if (!['ICU', 'CVICU'].includes(room.acuity)) return 0;
+  const others = assigned.filter(r => ['ICU', 'CVICU'].includes(r.acuity));
+  if (!others.length) return 0;
+  return Math.max(...others.map(r => walkingDistance(r.roomNumber, room.roomNumber)));
 };
 
 const expectedDischargeCount = (rooms: PatientRoom[]) => rooms.filter(r => r.flags.includes('Expected DC')).length;
@@ -84,6 +75,7 @@ export function runRecommendationEngine(
   allowTeleQuad = false,
   strategy: RecommendationStrategy = 'BALANCED',
   fixedAssignments: Record<string, string> = {},
+  lockedNurseIds: string[] = [],
 ): RecommendationResult {
   const warnings: AssignmentWarning[] = [];
   const assignments: Record<string, string> = {};
@@ -93,6 +85,11 @@ export function runRecommendationEngine(
   const allowCharge = chargeTakingPatients;
   const allowQuad = allowTeleQuad;
   const fixedNurseIds = new Set(Object.values(fixedAssignments));
+  // A nurse is only closed to further patients when the CN explicitly LOCKS
+  // them. Pre-assigning one room no longer silently caps that nurse — the CN
+  // frequently seeds a nurse's sickest patient and expects Semi-Auto to
+  // finish filling that nurse to ratio.
+  const lockedNurses = new Set(lockedNurseIds);
 
   const nurses = staff.filter(s => ['ACTIVE', 'RECALLED'].includes(s.staffStatus) && bedside(s) && (s.role !== 'CHG' || allowCharge || fixedNurseIds.has(s.id)));
   const state: Record<string, { nurse: NurseStaff; assignedRooms: PatientRoom[]; reasons: string[] }> = {};
@@ -149,7 +146,7 @@ export function runRecommendationEngine(
     let reasons: string[] = [];
 
     for (const n of nurses) {
-      if (fixedNurseIds.has(n.id)) continue;
+      if (lockedNurses.has(n.id)) continue;
       if (n.role === 'CHG' && !allowCharge) continue;
       const assigned = state[n.id].assignedRooms;
       if (!isClinicallyQualified(n, room) || workloadBlockReason(n, assigned, room, allowQuad)) continue;
@@ -180,17 +177,22 @@ export function runRecommendationEngine(
         }
       }
 
-      if (createsNonIdeal103IcuPair(assigned, room)) {
-        candidate -= 100;
-        candidateReasons.push('⚠ avoids pairing Room 103 ICU with another Hall A ICU unless necessary');
-      }
-      if (createsNonIdeal122114IcuPair(assigned, room)) {
+      // Critical-care proximity. Splitting two ICU/CVICU patients across the
+      // unit is the single worst geographic outcome, so it is priced by
+      // walking distance rather than by a list of forbidden room pairs.
+      const ccSpread = criticalCareSpread(assigned, room);
+      if (ccSpread > GEOGRAPHY_BANDS.STRETCHED) {
         candidate -= 130;
-        candidateReasons.push('⚠ strongly avoids pairing Room 122 ICU with Room 114 ICU unless operationally necessary');
-      }
-      if (createsPreferred122LowerAcuityPair(assigned, room)) {
+        candidateReasons.push(`⚠ avoids splitting critical-care rooms across the unit (${Math.round(ccSpread)} walk)`);
+      } else if (ccSpread > GEOGRAPHY_BANDS.WORKABLE) {
+        candidate -= 70;
+        candidateReasons.push(`⚠ critical-care rooms would be a long walk apart (${Math.round(ccSpread)})`);
+      } else if (ccSpread > GEOGRAPHY_BANDS.NEAR) {
+        candidate -= 25;
+        candidateReasons.push(`• critical-care rooms are not close together (${Math.round(ccSpread)})`);
+      } else if (ccSpread > 0) {
         candidate += 35;
-        candidateReasons.push('✓ prefers Room 122 ICU with nearby PCU/TELE in 113, 120, or 121 when staffing permits');
+        candidateReasons.push(`✓ pairs critical-care rooms that are close together (${Math.round(ccSpread)})`);
       }
 
       if (strategy === 'BALANCED') {
@@ -236,12 +238,21 @@ export function runRecommendationEngine(
       warnings.push({ type: 'WORKLOAD_RATIO', severity: 'INFO', nurseName: st.nurse.name, message: `Discharge concentration advisory: ${st.nurse.name} has 2 expected discharges (${dcRooms.join(', ')}). Consider spreading expected discharges to reduce the likelihood that one nurse receives multiple replacement admissions.` });
     }
 
-    if (st.assignedRooms.some(r => r.roomNumber === '103' && r.acuity === 'ICU') && st.assignedRooms.some(r => r.roomNumber !== '103' && r.acuity === 'ICU' && ROOM_METADATA_MAP[r.roomNumber]?.hall === 'A')) {
-      const pairedHallARooms = st.assignedRooms.filter(r => r.roomNumber !== '103' && r.acuity === 'ICU' && ROOM_METADATA_MAP[r.roomNumber]?.hall === 'A').map(r => r.roomNumber);
-      warnings.push({ type: 'GEOGRAPHY', severity: 'MEDIUM', nurseName: st.nurse.name, roomNumber: '103', message: `Non-ideal ICU pairing: Room 103 ICU is paired with Hall A ICU room ${pairedHallARooms.join(', ')} for ${st.nurse.name}. Prefer splitting this pair when skill mix allows.` });
-    }
-    if (st.assignedRooms.some(r => r.roomNumber === '122' && r.acuity === 'ICU') && st.assignedRooms.some(r => r.roomNumber === '114' && r.acuity === 'ICU')) {
-      warnings.push({ type: 'GEOGRAPHY', severity: 'HIGH', nurseName: st.nurse.name, roomNumber: '122', message: `High-risk ICU pairing: Rooms 122 and 114 are both ICU and assigned to ${st.nurse.name}. Avoid this pairing when staffing permits; use only when operationally necessary with Charge Nurse review.` });
+    const criticalRooms = st.assignedRooms.filter(r => ['ICU', 'CVICU'].includes(r.acuity)).map(r => r.roomNumber);
+    if (criticalRooms.length > 1) {
+      let worstPair: [string, string] = [criticalRooms[0], criticalRooms[1]];
+      let worst = 0;
+      for (let i = 0; i < criticalRooms.length; i += 1) {
+        for (let j = i + 1; j < criticalRooms.length; j += 1) {
+          const d = walkingDistance(criticalRooms[i], criticalRooms[j]);
+          if (d > worst) { worst = d; worstPair = [criticalRooms[i], criticalRooms[j]]; }
+        }
+      }
+      if (worst > GEOGRAPHY_BANDS.STRETCHED) {
+        warnings.push({ type: 'GEOGRAPHY', severity: 'HIGH', nurseName: st.nurse.name, roomNumber: worstPair[0], message: `Critical-care rooms ${worstPair[0]} and ${worstPair[1]} are at opposite ends of the unit for ${st.nurse.name}. Avoid when staffing permits; use only when operationally necessary with Charge Nurse review.` });
+      } else if (worst > GEOGRAPHY_BANDS.WORKABLE) {
+        warnings.push({ type: 'GEOGRAPHY', severity: 'MEDIUM', nurseName: st.nurse.name, roomNumber: worstPair[0], message: `Critical-care rooms ${worstPair[0]} and ${worstPair[1]} are a long walk apart for ${st.nurse.name}. Prefer splitting this pair when skill mix allows.` });
+      }
     }
     if (st.nurse.role === 'CHG' && st.assignedRooms.length) warnings.push({ type: 'WORKLOAD_RATIO', severity: 'MEDIUM', nurseName: st.nurse.name, message: `Charge RN exception: ${st.nurse.name} assigned ${st.assignedRooms.map(r => r.roomNumber).join(', ')}.` });
     if (st.assignedRooms.length === 4 && st.assignedRooms.every(r => r.acuity === 'TELE')) warnings.push({ type: 'WORKLOAD_RATIO', severity: 'MEDIUM', nurseName: st.nurse.name, message: `TELE quad exception: ${st.nurse.name} assigned ${st.assignedRooms.map(r => r.roomNumber).join(', ')}.` });
