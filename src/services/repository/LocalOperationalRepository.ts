@@ -77,12 +77,13 @@ export class LocalOperationalRepository implements OperationalRepository {
 
   async loadOperationalEvents(
     _unitId: string,
-    date: string,
-    shiftType: ShiftType
+    date?: string,
+    shiftType?: ShiftType
   ): Promise<RepositoryResult<OperationalEvent[]>> {
-    const data = StorageService.loadOperationalEvents().filter(
-      event => event.shiftDate === date && event.shiftType === shiftType
-    );
+    const allEvents = StorageService.loadOperationalEvents();
+    const data = date && shiftType
+      ? allEvents.filter(event => event.shiftDate === date && event.shiftType === shiftType)
+      : allEvents;
     const lastModified = data[0]?.timestamp;
     return { data, metadata: localMetadata('events', lastModified) };
   }
@@ -91,9 +92,7 @@ export class LocalOperationalRepository implements OperationalRepository {
     event: OperationalEvent
   ): Promise<RepositoryResult<OperationalEvent[]>> {
     StorageService.appendOperationalEvent(event);
-    const data = StorageService.loadOperationalEvents().filter(
-      item => item.shiftDate === event.shiftDate && item.shiftType === event.shiftType
-    );
+    const data = StorageService.loadOperationalEvents();
     return { data, metadata: localMetadata('events', event.timestamp) };
   }
 }
